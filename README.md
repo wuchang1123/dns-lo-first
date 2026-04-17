@@ -52,7 +52,9 @@ go mod download
 go build -o dns-lo-first ./cmd/dns-server
 ```
 
-### systemd 开机启动（Linux）
+### 开机启动
+
+**Linux (systemd)**
 
 ```bash
 # 编译 Linux 版本
@@ -69,6 +71,22 @@ sudo systemctl start dns-server
 
 # 查看状态
 sudo systemctl status dns-server
+```
+
+**macOS (launchd)**
+
+```bash
+# 编译 macOS 版本
+make macos
+
+# 安装 launchd 服务
+sudo make install
+
+# 重启电脑后服务会自动启动，或手动启动：
+sudo launchctl start com.dns-server.dns-server
+
+# 查看状态
+sudo launchctl list | grep dns-server
 ```
 
 ### 卸载
@@ -161,7 +179,8 @@ dns-lo-first/
 ├── scripts/
 │   ├── install.sh            # 安装脚本
 │   ├── uninstall.sh          # 卸载脚本
-│   └── dns-server.service    # systemd 服务文件
+│   ├── dns-server.service    # systemd 服务文件
+│   └── com.dns-server.dns-server.plist  # macOS launchd 服务文件
 ├── config.yaml               # 配置文件
 ├── go.mod
 └── README.md
