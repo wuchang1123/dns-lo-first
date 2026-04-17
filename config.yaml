@@ -1,0 +1,74 @@
+# DNS服务器配置
+server:
+  # 监听地址
+  listen: ":5055"
+  # 缓存大小
+  cache_size: 10000
+
+# 上游DNS服务器
+upstream:
+  # 本地DNS服务器（国内）
+  local:
+    #- "223.5.5.5:53"      # 阿里云DNS
+    #- "223.6.6.6:53"      # 阿里云DNS备用
+    #- "114.114.114.114:53" # 114DNS
+    - "192.168.100.1:53"
+  
+  # 海外DNS服务器
+  overseas:
+    - "8.8.8.8:53"        # Google DNS
+    - "8.8.4.4:53"        # Google DNS备用
+    - "1.1.1.1:53"        # Cloudflare DNS
+
+# 中国域名列表配置
+china_domains:
+  # 数据源URL
+  source_url: "https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
+  # 本地文件路径
+  file_path: "./data/china_domains.txt"
+  # 更新间隔（小时）
+  update_interval: 24
+  # 自定义域名列表
+  custom:
+    - "baidu.com"
+    - "alibaba.com"
+    - "tencent.com"
+    - "jd.com"
+    - "taobao.com"
+    - "tmall.com"
+
+# 海外服务IP段配置
+overseas_ip_ranges:
+  # 数据源配置
+  sources:
+    google:
+      url: "https://www.gstatic.com/ipranges/goog.json"
+      file_path: "./data/google_ips.txt"
+      update_interval: 24
+    cloudflare:
+      url: "https://www.cloudflare.com/ips-v4"
+      file_path: "./data/cloudflare_ips.txt"
+      update_interval: 24
+  
+  # 自定义IP段
+  custom:
+    google:
+      - "142.250.0.0/15"
+      - "172.217.0.0/16"
+      - "216.58.192.0/19"
+    github:
+      - "140.82.112.0/20"
+      - "192.30.252.0/22"
+
+# 判毒系统配置
+poison_check:
+  # 是否启用
+  enabled: true
+  # TLS连接超时（秒）
+  tls_timeout: 5
+  # 并发校验数量
+  concurrent_checks: 10
+  # 校验端口
+  tls_port: 443
+  # IP段匹配严格模式
+  strict_mode: true
