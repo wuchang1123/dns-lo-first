@@ -1,4 +1,4 @@
-# LO-DNS - 本地智能DNS服务器
+# LO FIRST-DNS - 本地智能DNS服务器
 
 基于Go开发的高性能本地DNS服务器，支持智能分流、判毒检测和定时更新。
 
@@ -43,13 +43,13 @@ DNS请求 -> 缓存检查 -> 域名分类 -> 查询策略
 ```bash
 # 克隆仓库
 git clone <repository>
-cd lo-dns
+cd dns-lo-first
 
 # 下载依赖
 go mod download
 
 # 构建
-go build -o lo-dns ./cmd/dns-server
+go build -o dns-lo-first ./cmd/dns-server
 ```
 
 ## 配置
@@ -93,10 +93,10 @@ poison_check:
 
 ```bash
 # 使用默认配置
-sudo ./lo-dns
+sudo ./bin/dns-server-darwin-arm64
 
 # 指定配置文件
-sudo ./lo-dns -config /path/to/config.yaml
+sudo ./bin/dns-server-darwin-arm64 -config /path/to/config.yaml
 ```
 
 > 注意：需要root权限或特权端口权限来监听53端口
@@ -104,7 +104,7 @@ sudo ./lo-dns -config /path/to/config.yaml
 ### 仅更新数据
 
 ```bash
-./lo-dns -update-only
+./bin/dns-server-darwin-arm64 -update-only
 ```
 
 ### 测试
