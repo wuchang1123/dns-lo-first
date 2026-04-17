@@ -1,4 +1,4 @@
-# LO FIRST-DNS - 本地智能DNS服务器
+# LO FIRST - 本地智能DNS服务器
 
 基于Go开发的高性能本地DNS服务器，支持智能分流、判毒检测和定时更新。
 
