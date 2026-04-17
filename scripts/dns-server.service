@@ -1,0 +1,13 @@
+[Unit]
+Description=DNS Server with Geo-based Routing
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/dns-server -config /etc/dns-server/config.yaml
+Restart=on-failure
+RestartSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target

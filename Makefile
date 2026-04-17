@@ -1,4 +1,4 @@
-.PHONY: all linux linux-arm64 linux-arm macos clean
+.PHONY: all linux linux-arm64 linux-arm macos clean install uninstall
 
 # 编译所有平台
 all: linux linux-arm64 linux-arm macos
@@ -37,3 +37,13 @@ clean:
 default:
 	go build -o bin/dns-server ./cmd/dns-server/
 	@echo "已编译当前平台: bin/dns-server"
+
+# 安装 systemd 服务（需要 root 权限）
+install:
+	@chmod +x scripts/install.sh scripts/uninstall.sh
+	@sudo scripts/install.sh
+
+# 卸载 systemd 服务（需要 root 权限）
+uninstall:
+	@chmod +x scripts/install.sh scripts/uninstall.sh
+	@sudo scripts/uninstall.sh

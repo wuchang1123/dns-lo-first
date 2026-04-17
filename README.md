@@ -52,6 +52,31 @@ go mod download
 go build -o dns-lo-first ./cmd/dns-server
 ```
 
+### systemd 开机启动（Linux）
+
+```bash
+# 编译 Linux 版本
+make linux
+
+# 安装 systemd 服务
+sudo make install
+
+# 启用开机启动
+sudo systemctl enable dns-server
+
+# 启动服务
+sudo systemctl start dns-server
+
+# 查看状态
+sudo systemctl status dns-server
+```
+
+### 卸载
+
+```bash
+sudo make uninstall
+```
+
 ## 配置
 
 编辑 `config.yaml`：
@@ -133,6 +158,10 @@ dns-lo-first/
 │   ├── server/               # DNS服务器
 │   ├── upstream/             # 上游DNS管理
 │   └── updater/              # 定时更新
+├── scripts/
+│   ├── install.sh            # 安装脚本
+│   ├── uninstall.sh          # 卸载脚本
+│   └── dns-server.service    # systemd 服务文件
 ├── config.yaml               # 配置文件
 ├── go.mod
 └── README.md
