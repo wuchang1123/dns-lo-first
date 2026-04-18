@@ -45,6 +45,7 @@ func main() {
 	// 创建目录
 	cacheDir := filepath.Join(cfg.BaseDir, "cache")
 	dataDir := filepath.Join(cfg.BaseDir, "data")
+	logDir := filepath.Join(cfg.BaseDir, "log")
 
 	if err := os.MkdirAll(cfg.BaseDir, 0755); err != nil {
 		log.Fatalf("创建基础目录失败: %v", err)
@@ -55,6 +56,18 @@ func main() {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatalf("创建数据目录失败: %v", err)
 	}
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		log.Fatalf("创建日志目录失败: %v", err)
+	}
+
+	// 设置日志输出到文件
+	logFile := filepath.Join(logDir, "lo-first.log")
+	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("打开日志文件失败: %v", err)
+	}
+	defer f.Close()
+	log.SetOutput(f)
 
 	log.Printf("[%s] 启动中...", AppName)
 	log.Printf("配置文件: %s", *configPath)
