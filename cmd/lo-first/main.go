@@ -84,6 +84,7 @@ func main() {
 		FilePath:       filepath.Join(cfg.BaseDir, cfg.LocalDomains.FilePath),
 		UpdateInterval: cfg.LocalDomains.UpdateInterval,
 		Custom:         cfg.LocalDomains.Custom,
+		Overpass:       cfg.LocalDomains.Overpass,
 	})
 	if err := domainMgr.Load(); err != nil {
 		log.Printf("加载所在国域名列表失败: %v", err)
