@@ -68,7 +68,11 @@ func main() {
 	var logMutex sync.Mutex
 
 	rotateLogFile := func() error {
-		dateStr := time.Now().Format("2006-01-02")
+		loc, err := time.LoadLocation("Asia/Shanghai")
+		if err != nil {
+			loc = time.UTC
+		}
+		dateStr := time.Now().In(loc).Format("2006-01-02")
 		if dateStr == currentDateStr && logFile != nil {
 			return nil
 		}
