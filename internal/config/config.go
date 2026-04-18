@@ -9,6 +9,7 @@ import (
 
 // Config 总配置结构
 type Config struct {
+	BaseDir      string             `yaml:"base_dir"`
 	Server       ServerConfig       `yaml:"server"`
 	Upstream     UpstreamConfig     `yaml:"upstream"`
 	LocalDomains LocalDomainsConfig `yaml:"local_domains"`
@@ -59,6 +60,13 @@ func Load(path string) (*Config, error) {
 	}
 
 	// 设置默认值
+	if cfg.BaseDir == "" {
+		currentDir, err := os.Getwd()
+		if err != nil {
+			currentDir = "."
+		}
+		cfg.BaseDir = currentDir
+	}
 	if cfg.Server.Listen == "" {
 		cfg.Server.Listen = ":53"
 	}

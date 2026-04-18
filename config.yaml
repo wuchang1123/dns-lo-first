@@ -1,7 +1,10 @@
 # DNS服务器配置
+# 基础目录，默认当前目录
+base_dir: "."
+
 server:
   # 监听地址
-  listen: ":5055"
+  listen: ":5355"
   # 缓存大小
   cache_size: 10000
 

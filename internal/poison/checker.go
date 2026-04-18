@@ -54,8 +54,8 @@ type CheckResult struct {
 }
 
 // NewChecker 创建检查器
-func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager) *Checker {
-	cacheDir := "./cache"
+func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, baseDir string) *Checker {
+	cacheDir := filepath.Join(baseDir, "cache")
 	os.MkdirAll(cacheDir, 0755)
 
 	checker := &Checker{

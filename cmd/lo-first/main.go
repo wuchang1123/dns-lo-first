@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"lo-dns/internal/config"
@@ -41,8 +42,23 @@ func main() {
 		log.Fatalf("加载配置失败: %v", err)
 	}
 
+	// 创建目录
+	cacheDir := filepath.Join(cfg.BaseDir, "cache")
+	dataDir := filepath.Join(cfg.BaseDir, "data")
+
+	if err := os.MkdirAll(cfg.BaseDir, 0755); err != nil {
+		log.Fatalf("创建基础目录失败: %v", err)
+	}
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		log.Fatalf("创建缓存目录失败: %v", err)
+	}
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		log.Fatalf("创建数据目录失败: %v", err)
+	}
+
 	log.Printf("[%s] 启动中...", AppName)
 	log.Printf("配置文件: %s", *configPath)
+	log.Printf("基础目录: %s", cfg.BaseDir)
 
 	// 创建上游DNS管理器
 	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
@@ -50,7 +66,7 @@ func main() {
 	// 创建域名管理器
 	domainMgr := domain.NewManager(domain.Config{
 		SourceURL:      cfg.LocalDomains.SourceURL,
-		FilePath:       cfg.LocalDomains.FilePath,
+		FilePath:       filepath.Join(cfg.BaseDir, cfg.LocalDomains.FilePath),
 		UpdateInterval: cfg.LocalDomains.UpdateInterval,
 		Custom:         cfg.LocalDomains.Custom,
 	})
@@ -59,7 +75,7 @@ func main() {
 	}
 
 	// 创建判毒检查器
-	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr)
+	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr, cfg.BaseDir)
 
 	// 创建DNS服务器
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)
