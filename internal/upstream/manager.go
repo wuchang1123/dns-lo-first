@@ -57,40 +57,6 @@ func (m *Manager) QueryOverseas(ctx context.Context, msg *dns.Msg) *Result {
 	return m.queryServers(ctx, msg, m.overseasServers, OverseasServer)
 }
 
-// QueryAllOverseas 查询所有海外DNS服务器并返回所有结果
-func (m *Manager) QueryAllOverseas(ctx context.Context, msg *dns.Msg) []*Result {
-	return m.queryAllServers(ctx, msg, m.overseasServers, OverseasServer)
-}
-
-// queryAllServers 查询所有服务器并返回所有结果
-func (m *Manager) queryAllServers(ctx context.Context, msg *dns.Msg, servers []string, serverType ServerType) []*Result {
-	if len(servers) == 0 {
-		return nil
-	}
-
-	var wg sync.WaitGroup
-	results := make([]*Result, len(servers))
-
-	for i, server := range servers {
-		wg.Add(1)
-		go func(idx int, srv string) {
-			defer wg.Done()
-			result := m.querySingle(ctx, msg, srv, serverType)
-			results[idx] = result
-		}(i, server)
-	}
-
-	wg.Wait()
-
-	var validResults []*Result
-	for _, r := range results {
-		if r != nil {
-			validResults = append(validResults, r)
-		}
-	}
-	return validResults
-}
-
 // QueryAll 并发查询所有上游
 func (m *Manager) QueryAll(ctx context.Context, msg *dns.Msg) (*Result, *Result) {
 	var wg sync.WaitGroup

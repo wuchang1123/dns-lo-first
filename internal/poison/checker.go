@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"lo-dns/internal/config"
+
+	"github.com/miekg/dns"
 )
 
 // cacheEntry 缓存项
@@ -85,6 +87,9 @@ func NewChecker(cfg config.PoisonCheckConfig) *Checker {
 		}
 	}()
 
+	// 启动后台缓存更新任务
+	go checker.startCacheUpdater()
+
 	return checker
 }
 
@@ -132,11 +137,6 @@ func (c *Checker) checkAndSyncCacheFile() {
 	}
 }
 
-// GetFromCache 从缓存获取结果（公共方法）
-func (c *Checker) GetFromCache(domain string, ip net.IP) (bool, string, bool) {
-	return c.getFromCache(domain, ip)
-}
-
 // getFromCache 从缓存获取结果
 func (c *Checker) getFromCache(domain string, ip net.IP) (bool, string, bool) {
 	// 先检查并同步缓存文件状态
@@ -156,6 +156,132 @@ func (c *Checker) getFromCache(domain string, ip net.IP) (bool, string, bool) {
 	}
 
 	return entry.Passed, entry.Reason, true
+}
+
+// startCacheUpdater 启动后台缓存更新任务
+func (c *Checker) startCacheUpdater() {
+	ticker := time.NewTicker(1 * time.Hour) // 每小时更新一次
+	defer ticker.Stop()
+
+	// 初始运行一次
+	c.updateCache()
+
+	for range ticker.C {
+		c.updateCache()
+	}
+}
+
+// updateCache 更新缓存
+func (c *Checker) updateCache() {
+	fmt.Println("[CACHE UPDATER] 开始更新缓存...")
+	start := time.Now()
+
+	// 1. 提取所有域名
+	domains := c.getAllDomains()
+	fmt.Printf("[CACHE UPDATER] 提取到 %d 个域名\n", len(domains))
+
+	// 2. 逐个域名处理
+	for _, domain := range domains {
+		// 2.1 清除过期且passed为true的记录
+		c.cleanExpiredRecords(domain)
+
+		// 2.2 查询上游服务器获取IP
+		ips := c.queryUpstreamForIPs(domain)
+		if len(ips) == 0 {
+			continue
+		}
+
+		// 2.3 TLS验证上游服务器返回的IP
+		c.verifyAndUpdateCache(domain, ips)
+	}
+
+	fmt.Printf("[CACHE UPDATER] 缓存更新完成，耗时 %v\n", time.Since(start))
+}
+
+// getAllDomains 获取所有域名
+func (c *Checker) getAllDomains() []string {
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+
+	domains := make([]string, 0, len(c.cache))
+	for domain := range c.cache {
+		domains = append(domains, domain)
+	}
+	return domains
+}
+
+// cleanExpiredRecords 清除过期且passed为true的记录
+func (c *Checker) cleanExpiredRecords(domain string) {
+	c.cacheMu.Lock()
+	defer c.cacheMu.Unlock()
+
+	domainCache, exists := c.cache[domain]
+	if !exists {
+		return
+	}
+
+	now := time.Now()
+	for ip, entry := range domainCache {
+		if now.After(entry.ExpiresAt) && entry.Passed {
+			delete(domainCache, ip)
+		}
+	}
+
+	// 如果域名缓存为空，删除该域名
+	if len(domainCache) == 0 {
+		delete(c.cache, domain)
+	}
+}
+
+// queryUpstreamForIPs 查询上游服务器获取IP
+func (c *Checker) queryUpstreamForIPs(domain string) []net.IP {
+	// 创建DNS查询消息
+	msg := &dns.Msg{}
+	msg.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+
+	// 使用默认的本地DNS服务器查询
+	client := &dns.Client{
+		Net:     "udp",
+		Timeout: 5 * time.Second,
+	}
+
+	// 使用常见的公共DNS服务器
+	servers := []string{
+		"8.8.8.8:53",
+		"1.1.1.1:53",
+		"114.114.114.114:53",
+	}
+
+	for _, server := range servers {
+		resp, _, err := client.Exchange(msg, server)
+		if err == nil && resp != nil && resp.Rcode == dns.RcodeSuccess {
+			var ips []net.IP
+			for _, answer := range resp.Answer {
+				if a, ok := answer.(*dns.A); ok {
+					ips = append(ips, a.A)
+				}
+			}
+			if len(ips) > 0 {
+				return ips
+			}
+		}
+	}
+
+	return nil
+}
+
+// verifyAndUpdateCache 验证IP并更新缓存
+func (c *Checker) verifyAndUpdateCache(domain string, ips []net.IP) {
+	for _, ip := range ips {
+		// 进行TLS验证
+		result := c.checkTLS(domain, ip, "local")
+		// 验证结果已经通过setCache更新到缓存
+		if result.success {
+			fmt.Printf("[CACHE UPDATER] 验证通过: %s -> %s\n", domain, ip)
+		} else {
+			fmt.Printf("[CACHE UPDATER] 验证失败: %s -> %s (%s)\n", domain, ip, result.err)
+		}
+	}
 }
 
 // setCache 设置缓存

@@ -110,35 +110,3 @@ func (c *DNSCache) Size() int {
 	defer c.mu.RUnlock()
 	return len(c.cache)
 }
-
-func (c *DNSCache) UpdateResponse(key string, ips []string) bool {
-	if c.maxSize == 0 {
-		return false
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	entry, exists := c.cache[key]
-	if !exists {
-		return false
-	}
-
-	ipSet := make(map[string]bool)
-	for _, ip := range ips {
-		ipSet[ip] = true
-	}
-
-	var newAns []dns.RR
-	for _, rr := range entry.response.Answer {
-		if a, ok := rr.(*dns.A); ok {
-			if ipSet[a.A.String()] {
-				newAns = append(newAns, rr)
-			}
-		}
-	}
-
-	entry.response.Answer = newAns
-	entry.expiry = time.Now().Add(c.ttl)
-	return true
-}
