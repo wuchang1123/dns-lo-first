@@ -39,6 +39,10 @@ local_domains:
     - "jd.com"
     - "taobao.com"
     - "tmall.com"
+  overpass:
+    - "googlevideo.com"
+    - "ytimg.com"
+    - "ggpht.com"
 
 # 判毒系统配置
 poison_check:
