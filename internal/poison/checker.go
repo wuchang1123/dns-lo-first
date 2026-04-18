@@ -71,7 +71,7 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager) *Ch
 		},
 		sem:         make(chan struct{}, cfg.ConcurrentChecks),
 		cache:       make(cacheData),
-		cacheTTL:    30 * time.Minute,
+		cacheTTL:    time.Duration(cfg.CacheTTL) * time.Minute,
 		cacheFile:   filepath.Join(cacheDir, "tls_cache.json"),
 		upstreamMgr: upstreamMgr,
 		stopChan:    make(chan struct{}),

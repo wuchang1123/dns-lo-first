@@ -35,7 +35,7 @@ type LocalDomainsConfig struct {
 	Custom         []string `yaml:"custom"`
 }
 
-// PoisonCheckConfig 判毒系统配置
+// PoisonCheckConfig 判毒检查配置
 type PoisonCheckConfig struct {
 	Enabled              bool `yaml:"enabled"`
 	TLSTimeout           int  `yaml:"tls_timeout"`
@@ -43,6 +43,7 @@ type PoisonCheckConfig struct {
 	TLSPort              int  `yaml:"tls_port"`
 	StrictMode           bool `yaml:"strict_mode"`
 	CacheRefreshInterval int  `yaml:"cache_refresh_interval"`
+	CacheTTL             int  `yaml:"cache_ttl"` // 缓存过期时间（分钟）
 }
 
 // Load 加载配置文件
@@ -75,6 +76,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.PoisonCheck.CacheRefreshInterval == 0 {
 		cfg.PoisonCheck.CacheRefreshInterval = 30
+	}
+	if cfg.PoisonCheck.CacheTTL == 0 {
+		cfg.PoisonCheck.CacheTTL = 30
 	}
 
 	return &cfg, nil
