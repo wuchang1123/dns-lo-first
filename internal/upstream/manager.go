@@ -98,6 +98,9 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 				case resultChan <- result:
 				default:
 				}
+			} else {
+				// 记录失败的服务器和错误
+				fmt.Printf("[UPSTREAM] %s 服务器 %s 查询失败: %v\n", serverTypeToString(serverType), srv, result.Err)
 			}
 		}(server)
 	}

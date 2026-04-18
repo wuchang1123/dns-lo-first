@@ -585,12 +585,21 @@ func (c *Checker) hasPassedCache(domain string) bool {
 
 func (c *Checker) queryAndVerifyFromUpstream(domain string) {
 	if c.upstreamMgr == nil {
+		fmt.Printf("[CACHE REFRESH] %s: upstreamMgr为nil，跳过上游查询\n", domain)
 		return
 	}
 
+	// 确保域名是完全限定的（以点结尾）用于DNS查询
+	fqdn := domain
+	if !strings.HasSuffix(fqdn, ".") {
+		fqdn = fqdn + "."
+	}
+
+	fmt.Printf("[CACHE REFRESH] %s: 开始查询上游服务器...\n", domain)
+
 	msg := &dns.Msg{
 		Question: []dns.Question{
-			{Name: domain, Qtype: dns.TypeA, Qclass: dns.ClassINET},
+			{Name: fqdn, Qtype: dns.TypeA, Qclass: dns.ClassINET},
 		},
 	}
 
@@ -598,8 +607,16 @@ func (c *Checker) queryAndVerifyFromUpstream(domain string) {
 	defer cancel()
 
 	result := c.upstreamMgr.QueryOverseas(ctx, msg)
-	if result == nil || result.Err != nil || result.Response == nil {
-		fmt.Printf("[CACHE REFRESH] %s: 查询上游服务器失败\n", domain)
+	if result == nil {
+		fmt.Printf("[CACHE REFRESH] %s: 查询上游服务器返回nil\n", domain)
+		return
+	}
+	if result.Err != nil {
+		fmt.Printf("[CACHE REFRESH] %s: 查询上游服务器失败: %v\n", domain, result.Err)
+		return
+	}
+	if result.Response == nil {
+		fmt.Printf("[CACHE REFRESH] %s: 查询上游服务器返回空响应\n", domain)
 		return
 	}
 

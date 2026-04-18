@@ -50,4 +50,4 @@ poison_check:
   # IP段匹配严格模式
   strict_mode: true
   # 缓存刷新间隔（分钟），0表示禁用
-  cache_refresh_interval: 10
+  cache_refresh_interval: 1
