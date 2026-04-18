@@ -19,6 +19,21 @@ import (
 	"lo-dns/internal/upstream"
 )
 
+// 自定义日志写入器，使用配置的时区
+type timezoneLogWriter struct {
+	mu       sync.Mutex
+	file     *os.File
+	timezone *time.Location
+}
+
+func (w *timezoneLogWriter) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	now := time.Now().In(w.timezone)
+	logLine := fmt.Sprintf("%s %s", now.Format("2006/01/02 15:04:05"), string(p))
+	return w.file.WriteString(logLine)
+}
+
 var (
 	configPath = flag.String("config", "config.yaml", "配置文件路径")
 	updateOnly = flag.Bool("update-only", false, "仅更新数据，不启动服务器")
@@ -63,9 +78,10 @@ func main() {
 	}
 
 	// 设置日志输出到文件（按日期每天一个文件）
-	var logFile *os.File
 	var currentDateStr string
 	var logMutex sync.Mutex
+	var tzLoc *time.Location
+	var logWriter *timezoneLogWriter
 
 	rotateLogFile := func() error {
 		loc, err := time.LoadLocation(cfg.Server.LogTimezone)
@@ -77,10 +93,10 @@ func main() {
 				log.Printf("[WARN] Local 时区不可用，使用 UTC")
 			}
 		}
+		tzLoc = loc
 		now := time.Now().In(loc)
 		dateStr := now.Format("2006-01-02")
-		log.Printf("[DEBUG] 当前日期（%s）: %s, 当前时间: %s", cfg.Server.LogTimezone, dateStr, now.Format("15:04:05"))
-		if dateStr == currentDateStr && logFile != nil {
+		if dateStr == currentDateStr && logWriter != nil {
 			return nil
 		}
 		logFilePath := filepath.Join(logDir, fmt.Sprintf("lo-first-%s.log", dateStr))
@@ -88,12 +104,22 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if logFile != nil {
-			logFile.Close()
+		if logWriter != nil {
+			logWriter.mu.Lock()
+			if logWriter.file != nil {
+				logWriter.file.Close()
+			}
+			logWriter.file = f
+			logWriter.timezone = tzLoc
+			logWriter.mu.Unlock()
+		} else {
+			logWriter = &timezoneLogWriter{
+				file:     f,
+				timezone: tzLoc,
+			}
+			log.SetOutput(logWriter)
 		}
-		logFile = f
 		currentDateStr = dateStr
-		log.SetOutput(f)
 		log.Printf("[LOG ROTATE] 日志文件轮转到: %s", dateStr)
 		return nil
 	}
