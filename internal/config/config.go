@@ -34,6 +34,7 @@ type LocalDomainsConfig struct {
 	FilePath       string   `yaml:"file_path"`
 	UpdateInterval int      `yaml:"update_interval"`
 	Custom         []string `yaml:"custom"`
+	Overpass       []string `yaml:"overpass"`
 }
 
 // PoisonCheckConfig 判毒检查配置
