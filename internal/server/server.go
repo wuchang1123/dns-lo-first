@@ -175,12 +175,52 @@ func (s *Server) queryLocalOnly(r *dns.Msg) (*dns.Msg, error) {
 	return result.Response, nil
 }
 
-// queryOverseasOnly 只使用海外DNS查询
+// queryOverseasOnly 只使用海外DNS查询（并进行TLS校验）
 func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 	result := s.upstreamMgr.QueryOverseas(context.Background(), r)
 	if result.Err != nil {
 		return nil, result.Err
 	}
+
+	// 提取域名
+	domain := strings.TrimSuffix(r.Question[0].Name, ".")
+
+	// 提取IP并进行TLS验证
+	ips := extractIPs(result.Response)
+	if len(ips) > 0 {
+		// 随机选择一个IP进行检查
+		selectedIPs := randomSelectIPs(ips)
+		if len(selectedIPs) > 0 {
+			// 进行TLS验证
+			checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
+			log.Printf("[OVERPASS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
+				domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
+
+			// 在后台对剩余IP进行TLS验证并缓存结果
+			if len(ips) > 1 {
+				go func() {
+					remainingIPs := make([]net.IP, 0, len(ips)-1)
+					for _, ip := range ips {
+						found := false
+						for _, selectedIP := range selectedIPs {
+							if ip.Equal(selectedIP) {
+								found = true
+								break
+							}
+						}
+						if !found {
+							remainingIPs = append(remainingIPs, ip)
+						}
+					}
+					if len(remainingIPs) > 0 {
+						s.poisonChecker.Check(domain, remainingIPs, "overseas")
+						log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+					}
+				}()
+			}
+		}
+	}
+
 	return result.Response, nil
 }
 
