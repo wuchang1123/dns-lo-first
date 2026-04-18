@@ -1,6 +1,6 @@
 .DS_Store
 *.log
 *.tmp
-bin/lo-first-*
-cache/*.json
-data/*.txt
+/bin/*
+/cache/*
+/data/*
