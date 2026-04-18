@@ -1,6 +1,6 @@
 # LO FIRST - 本地智能DNS服务器
 
-![](https://github.com/lord-alfred/ipranges/raw/main/logo.png)
+![](lo.png)
 
 基于Go开发的高性能本地DNS服务器，支持智能分流、判毒检测和定时更新。
 
