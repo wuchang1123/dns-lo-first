@@ -388,8 +388,44 @@ func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckRes
 	// 直接进行TLS握手验证
 	conf := &tls.Config{
 		ServerName:         domain,
-		InsecureSkipVerify: false,
+		InsecureSkipVerify: true, // 跳过默认验证，使用自定义验证
 		MinVersion:         tls.VersionTLS12,
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			// 解析证书
+			certs := make([]*x509.Certificate, len(rawCerts))
+			for i, rawCert := range rawCerts {
+				cert, err := x509.ParseCertificate(rawCert)
+				if err != nil {
+					return err
+				}
+				certs[i] = cert
+			}
+
+			// 验证证书链
+			opts := x509.VerifyOptions{
+				DNSName: domain,
+			}
+			if _, err := certs[0].Verify(opts); err == nil {
+				return nil
+			}
+
+			// 如果验证失败，尝试使用自定义域名匹配逻辑
+			// 检查所有可能的父域名
+			currentDomain := domain
+			for {
+				if err := verifyCertDomain(certs[0], currentDomain); err == nil {
+					return nil
+				}
+				// 提取父域名
+				parts := strings.Split(currentDomain, ".")
+				if len(parts) <= 2 {
+					break
+				}
+				currentDomain = strings.Join(parts[1:], ".")
+			}
+
+			return fmt.Errorf("certificate not valid for %s", domain)
+		},
 	}
 
 	addr := net.JoinHostPort(ip.String(), fmt.Sprintf("%d", c.config.TLSPort))
@@ -450,7 +486,8 @@ func matchDomain(pattern, domain string) bool {
 	if len(pattern) > 1 && pattern[0] == '*' {
 		if pattern[1] == '.' {
 			suffix := pattern[2:]
-			if len(domain) > len(suffix) && domain[len(domain)-len(suffix):] == suffix {
+			// 检查域名是否以 ".suffix" 结尾，或者就是 "suffix"
+			if (len(domain) > len(suffix) && domain[len(domain)-len(suffix)-1:] == "."+suffix) || domain == suffix {
 				return true
 			}
 		}
