@@ -63,7 +63,7 @@ func main() {
 	}
 
 	// 创建判毒检查器
-	poisonChecker := poison.NewChecker(ipRangeMgr, cfg.PoisonCheck)
+	poisonChecker := poison.NewChecker(cfg.PoisonCheck)
 
 	// 创建DNS服务器
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, ipRangeMgr, poisonChecker)

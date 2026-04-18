@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"lo-dns/internal/config"
-	"lo-dns/internal/iprange"
 )
 
 // cacheEntry 缓存项
@@ -30,7 +29,6 @@ type cacheData map[string]map[string]*cacheEntry
 
 // Checker 判毒检查器
 type Checker struct {
-	ipRange     *iprange.Manager
 	config      config.PoisonCheckConfig
 	httpClient  *http.Client
 	sem         chan struct{} // 并发控制
@@ -50,14 +48,13 @@ type CheckResult struct {
 }
 
 // NewChecker 创建检查器
-func NewChecker(ipRange *iprange.Manager, cfg config.PoisonCheckConfig) *Checker {
+func NewChecker(cfg config.PoisonCheckConfig) *Checker {
 	// 确保缓存目录存在
 	cacheDir := "./cache"
 	os.MkdirAll(cacheDir, 0755)
 
 	checker := &Checker{
-		ipRange: ipRange,
-		config:  cfg,
+		config: cfg,
 		httpClient: &http.Client{
 			Timeout: time.Duration(cfg.TLSTimeout) * time.Second,
 			Transport: &http.Transport{
@@ -381,15 +378,7 @@ func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckRes
 		success: false,
 	}
 
-	// 1. 优先检查IP是否在已知服务IP段内
-	service := c.ipRange.FindService(ip)
-	if service != "" {
-		result.success = true
-		c.setCache(domain, ip, true, "IP in known range", source)
-		return result
-	}
-
-	// 2. IP不在IP段内，进行TLS握手验证
+	// 直接进行TLS握手验证
 	conf := &tls.Config{
 		ServerName:         domain,
 		InsecureSkipVerify: false,
