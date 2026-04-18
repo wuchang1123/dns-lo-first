@@ -49,7 +49,7 @@ cd dns-lo-first
 go mod download
 
 # 构建
-go build -o dns-lo-first ./cmd/dns-server
+go build -o dns-lo-first ./cmd/lo-first
 ```
 
 ### 开机启动
@@ -64,13 +64,13 @@ make linux
 sudo make install
 
 # 启用开机启动
-sudo systemctl enable dns-server
+sudo systemctl enable lo-first
 
 # 启动服务
-sudo systemctl start dns-server
+sudo systemctl start lo-first
 
 # 查看状态
-sudo systemctl status dns-server
+sudo systemctl status lo-first
 ```
 
 **macOS (launchd)**
@@ -83,10 +83,10 @@ make macos
 sudo make install
 
 # 重启电脑后服务会自动启动，或手动启动：
-sudo launchctl start com.dns-server.dns-server
+sudo launchctl start com.lo-first
 
 # 查看状态
-sudo launchctl list | grep dns-server
+sudo launchctl list | grep lo-first
 ```
 
 ### 卸载
@@ -136,10 +136,10 @@ poison_check:
 
 ```bash
 # 使用默认配置
-sudo ./bin/dns-server-darwin-arm64
+sudo ./bin/lo-first-darwin-arm64
 
 # 指定配置文件
-sudo ./bin/dns-server-darwin-arm64 -config /path/to/config.yaml
+sudo ./bin/lo-first-darwin-arm64 -config /path/to/config.yaml
 ```
 
 > 注意：需要root权限或特权端口权限来监听53端口
@@ -147,7 +147,7 @@ sudo ./bin/dns-server-darwin-arm64 -config /path/to/config.yaml
 ### 仅更新数据
 
 ```bash
-./bin/dns-server-darwin-arm64 -update-only
+./bin/lo-first-darwin-arm64 -update-only
 ```
 
 ### 测试
@@ -166,7 +166,7 @@ nslookup www.baidu.com 127.0.0.1
 ```
 dns-lo-first/
 ├── cmd/
-│   └── dns-server/
+│   └── lo-first/
 │       └── main.go           # 入口程序
 ├── internal/
 │   ├── config/               # 配置管理
@@ -179,8 +179,8 @@ dns-lo-first/
 ├── scripts/
 │   ├── install.sh            # 安装脚本
 │   ├── uninstall.sh          # 卸载脚本
-│   ├── dns-server.service    # systemd 服务文件
-│   └── com.dns-server.dns-server.plist  # macOS launchd 服务文件
+│   ├── lo-first.service    # systemd 服务文件
+│   └── com.lo-first.plist  # macOS launchd 服务文件
 ├── config.yaml               # 配置文件
 ├── go.mod
 └── README.md

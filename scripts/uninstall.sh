@@ -3,8 +3,8 @@
 set -e
 
 INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/dns-server"
-PLIST_FILE="com.dns-server.dns-server.plist"
+CONFIG_DIR="/etc/lo-first"
+PLIST_FILE="com.lo-first.plist"
 
 detect_os() {
     case "$(uname -s)" in
@@ -26,15 +26,15 @@ detect_os() {
 
 uninstall_linux() {
     echo "Stopping systemd service..."
-    sudo systemctl stop dns-server 2>/dev/null || true
-    sudo systemctl disable dns-server 2>/dev/null || true
+    sudo systemctl stop lo-first 2>/dev/null || true
+    sudo systemctl disable lo-first 2>/dev/null || true
 
     echo "Removing systemd service..."
-    sudo rm -f /etc/systemd/system/dns-server.service
+    sudo rm -f /etc/systemd/system/lo-first.service
     sudo systemctl daemon-reload
 
     echo "Removing binary..."
-    sudo rm -f "$INSTALL_DIR/dns-server"
+    sudo rm -f "$INSTALL_DIR/lo-first"
 
     echo "Removing config..."
     sudo rm -rf "$CONFIG_DIR"
@@ -50,7 +50,7 @@ uninstall_macos() {
     sudo rm -f /Library/LaunchDaemons/"$PLIST_FILE"
 
     echo "Removing binary..."
-    sudo rm -f "$INSTALL_DIR/dns-server"
+    sudo rm -f "$INSTALL_DIR/lo-first"
 
     echo "Removing config..."
     sudo rm -rf "$CONFIG_DIR"

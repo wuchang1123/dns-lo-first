@@ -3,8 +3,8 @@
 set -e
 
 INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/dns-server"
-PLIST_FILE="com.dns-server.dns-server.plist"
+CONFIG_DIR="/etc/lo-first"
+PLIST_FILE="com.lo-first.plist"
 
 detect_os() {
     case "$(uname -s)" in
@@ -25,12 +25,12 @@ detect_os() {
 }
 
 install_linux() {
-    SERVICE_FILE="dns-server.service"
+    SERVICE_FILE="lo-first.service"
 
     echo "Detected Linux with systemd"
 
-    if [ ! -f "bin/dns-server-linux-amd64" ]; then
-        echo "Error: bin/dns-server-linux-amd64 not found. Please build first with 'make linux'"
+    if [ ! -f "bin/lo-first-linux-amd64" ]; then
+        echo "Error: bin/lo-first-linux-amd64 not found. Please build first with 'make linux'"
         exit 1
     fi
 
@@ -38,13 +38,8 @@ install_linux() {
     sudo mkdir -p "$CONFIG_DIR"
 
     echo "Installing binary..."
-    sudo cp bin/dns-server-linux-amd64 "$INSTALL_DIR/dns-server"
-    sudo chmod +x "$INSTALL_DIR/dns-server"
-
-    echo "Installing config..."
-    if [ -f config.yaml ]; then
-        sudo cp config.yaml "$CONFIG_DIR/config.yaml"
-    fi
+    sudo cp bin/lo-first-linux-amd64 "$INSTALL_DIR/lo-first"
+    sudo chmod +x "$INSTALL_DIR/lo-first"
 
     echo "Installing systemd service..."
     sudo cp "$SERVICE_FILE" /etc/systemd/system/
@@ -53,37 +48,32 @@ install_linux() {
     echo "Installation complete!"
     echo ""
     echo "To enable and start the service:"
-    echo "  sudo systemctl enable dns-server"
-    echo "  sudo systemctl start dns-server"
+    echo "  sudo systemctl enable lo-first"
+    echo "  sudo systemctl start lo-first"
     echo ""
     echo "To check status:"
-    echo "  sudo systemctl status dns-server"
+    echo "  sudo systemctl status lo-first"
 }
 
 install_macos() {
     echo "Detected macOS with launchd"
 
-    if [ ! -f "bin/dns-server-darwin-arm64" ] && [ ! -f "bin/dns-server-darwin-amd64" ]; then
+    if [ ! -f "bin/lo-first-darwin-arm64" ] && [ ! -f "bin/lo-first-darwin-amd64" ]; then
         echo "Error: No macOS binary found. Please build first with 'make macos'"
         exit 1
     fi
 
-    local macos_binary="bin/dns-server-darwin-arm64"
+    local macos_binary="bin/lo-first-darwin-arm64"
     if [ ! -f "$macos_binary" ]; then
-        macos_binary="bin/dns-server-darwin-amd64"
+        macos_binary="bin/lo-first-darwin-amd64"
     fi
 
     echo "Creating directories..."
     sudo mkdir -p "$CONFIG_DIR"
 
     echo "Installing binary..."
-    sudo cp "$macos_binary" "$INSTALL_DIR/dns-server"
-    sudo chmod +x "$INSTALL_DIR/dns-server"
-
-    echo "Installing config..."
-    if [ -f config.yaml ]; then
-        sudo cp config.yaml "$CONFIG_DIR/config.yaml"
-    fi
+    sudo cp "$macos_binary" "$INSTALL_DIR/lo-first"
+    sudo chmod +x "$INSTALL_DIR/lo-first"
 
     echo "Installing launchd plist..."
     sudo cp "$PLIST_FILE" /Library/LaunchDaemons/
@@ -97,16 +87,16 @@ install_macos() {
     echo "The service has been loaded and will start on next boot."
     echo ""
     echo "To check status:"
-    echo "  sudo launchctl list | grep dns-server"
+    echo "  sudo launchctl list | grep lo-first"
     echo ""
     echo "To stop/start manually:"
-    echo "  sudo launchctl stop com.dns-server.dns-server"
-    echo "  sudo launchctl start com.dns-server.dns-server"
+    echo "  sudo launchctl stop com.lo-first"
+    echo "  sudo launchctl start com.lo-first"
     echo ""
     echo "To uninstall:"
     echo "  sudo launchctl unload /Library/LaunchDaemons/$PLIST_FILE"
     echo "  sudo rm /Library/LaunchDaemons/$PLIST_FILE"
-    echo "  sudo rm $INSTALL_DIR/dns-server"
+    echo "  sudo rm $INSTALL_DIR/lo-first"
 }
 
 install_linux_init() {

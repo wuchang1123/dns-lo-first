@@ -18,19 +18,19 @@ jobs:
           go-version: '1.23'
 
       - name: Build Linux AMD64
-        run: GOOS=linux GOARCH=amd64 go build -o bin/dns-server-linux-amd64 ./cmd/dns-server/
+        run: GOOS=linux GOARCH=amd64 go build -o bin/lo-first-linux-amd64 ./cmd/lo-first/
 
       - name: Build Linux ARM64
-        run: GOOS=linux GOARCH=arm64 go build -o bin/dns-server-linux-arm64 ./cmd/dns-server/
+        run: GOOS=linux GOARCH=arm64 go build -o bin/lo-first-linux-arm64 ./cmd/lo-first/
 
       - name: Build Linux ARMv7
-        run: GOOS=linux GOARCH=arm GOARM=7 go build -o bin/dns-server-linux-armv7 ./cmd/dns-server/
+        run: GOOS=linux GOARCH=arm GOARM=7 go build -o bin/lo-first-linux-armv7 ./cmd/lo-first/
 
       - name: Build macOS ARM64
-        run: GOOS=darwin GOARCH=arm64 go build -o bin/dns-server-darwin-arm64 ./cmd/dns-server/
+        run: GOOS=darwin GOARCH=arm64 go build -o bin/lo-first-darwin-arm64 ./cmd/lo-first/
 
       - name: Build macOS AMD64
-        run: GOOS=darwin GOARCH=amd64 go build -o bin/dns-server-darwin-amd64 ./cmd/dns-server/
+        run: GOOS=darwin GOARCH=amd64 go build -o bin/lo-first-darwin-amd64 ./cmd/lo-first/
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
