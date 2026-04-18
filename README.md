@@ -114,15 +114,22 @@ upstream:
     - "8.8.8.8:53"
     - "1.1.1.1:53"
 
-china_domains:
+local_domains:
   source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
   file_path: "./data/china_domains.txt"
   update_interval: 24    # 更新间隔（小时）
+  custom:                # 自定义域名列表
+    - "baidu.com"
+    - "taobao.com"
 
 poison_check:
   enabled: true
-  tls_timeout: 5
-  concurrent_checks: 10
+  tls_timeout: 5         # TLS连接超时（秒）
+  concurrent_checks: 10  # 并发校验数量
+  tls_port: 443          # 校验端口
+  strict_mode: true      # IP段匹配严格模式
+  cache_refresh_interval: 60  # 缓存刷新间隔（分钟），0表示禁用
+  cache_ttl: 30          # 缓存过期时间（分钟）
 ```
 
 ## 使用
@@ -197,8 +204,41 @@ dns-lo-first/
 
 ### 数据更新
 
-- **所在国域名**: 从dnsmasq-china-list项目定时更新（可以改为自己当地的域名列表）
+- **所在国域名**: 从 `wuchang1123/cn-dns-conf` 项目定时更新
+- **支持格式**: 支持 `server=/domain1/domain2/domain3/.../ip` 格式
 - **更新间隔**: 可配置，默认24小时
+- **自定义域名**: 支持在配置文件中添加自定义域名
+
+## 更新日志
+
+### 最近更新
+
+1. **数据源更新** (2026-04-18)
+   - 更换域名数据源为 `wuchang1123/cn-dns-conf`
+   - 支持新格式：`server=/domain1/domain2/domain3/.../ip`
+   - 一行可包含多个域名的解析
+
+2. **缓存配置优化** (2026-04-18)
+   - 添加 `cache_ttl` 配置项，控制单个缓存项的过期时间
+   - 默认值：30分钟
+
+3. **缓存刷新修复** (2026-04-18)
+   - 修复缓存刷新时的域名格式问题
+   - 确保DNS查询使用完全限定域名（以点结尾）
+   - 保持缓存中的域名格式不变
+
+4. **术语更新** (2026-04-18)
+   - 将"中国"更换为"所在国"
+   - 配置项名称从 `china_domains` 改为 `local_domains`
+
+5. **CI/CD优化** (2026-04-18)
+   - 更新GitHub Actions配置
+   - 忽略md文件和data目录的变更触发构建
+
+6. **缓存系统增强** (2026-04-18)
+   - 添加 `cache_refresh_interval` 配置项
+   - 支持后台自动刷新缓存
+   - 可配置刷新间隔（分钟）
 
 ## 许可证
 
