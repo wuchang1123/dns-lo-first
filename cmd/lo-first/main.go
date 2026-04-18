@@ -71,8 +71,10 @@ func main() {
 		loc, err := time.LoadLocation(cfg.Server.LogTimezone)
 		if err != nil {
 			loc = time.UTC
+			log.Printf("[WARN] 无法加载时区 %s，使用UTC", cfg.Server.LogTimezone)
 		}
 		dateStr := time.Now().In(loc).Format("2006-01-02")
+		log.Printf("[DEBUG] 当前日期（%s）: %s", cfg.Server.LogTimezone, dateStr)
 		if dateStr == currentDateStr && logFile != nil {
 			return nil
 		}
