@@ -1,5 +1,5 @@
 .DS_Store
 *.log
 *.tmp
-cache/
-bin/
+cache/*.json
+bin/lo-first-*

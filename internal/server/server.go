@@ -15,7 +15,6 @@ import (
 	"lo-dns/internal/cache"
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
-	"lo-dns/internal/iprange"
 	"lo-dns/internal/poison"
 	"lo-dns/internal/upstream"
 
@@ -28,7 +27,6 @@ type Server struct {
 	upstreamMgr    *upstream.Manager
 	domainMgr      *domain.Manager
 	poisonChecker  *poison.Checker
-	ipRange        *iprange.Manager
 	pendingQueries map[string]*pendingQuery
 	pendingMu      sync.Mutex
 	dnsCache       *cache.DNSCache
@@ -43,7 +41,7 @@ type pendingQuery struct {
 }
 
 // NewServer 创建DNS服务器
-func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *domain.Manager, ipRangeMgr *iprange.Manager, poisonChecker *poison.Checker) *Server {
+func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *domain.Manager, poisonChecker *poison.Checker) *Server {
 	var dnsCache *cache.DNSCache
 	if cfg.Server.CacheSize > 0 {
 		dnsCache = cache.NewDNSCache(cfg.Server.CacheSize, 5*time.Minute)
@@ -57,7 +55,6 @@ func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *dom
 		upstreamMgr:    upstreamMgr,
 		domainMgr:      domainMgr,
 		poisonChecker:  poisonChecker,
-		ipRange:        ipRangeMgr,
 		pendingQueries: make(map[string]*pendingQuery),
 		dnsCache:       dnsCache,
 	}

@@ -9,26 +9,23 @@ import (
 
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
-	"lo-dns/internal/iprange"
 )
 
 // Updater 定时更新器
 type Updater struct {
-	domainMgr  *domain.Manager
-	ipRangeMgr *iprange.Manager
-	config     *config.Config
-	stopChan   chan struct{}
-	stopped    bool
-	mu         sync.Mutex
+	domainMgr *domain.Manager
+	config    *config.Config
+	stopChan  chan struct{}
+	stopped   bool
+	mu        sync.Mutex
 }
 
 // NewUpdater 创建更新器
-func NewUpdater(domainMgr *domain.Manager, ipRangeMgr *iprange.Manager, cfg *config.Config) *Updater {
+func NewUpdater(domainMgr *domain.Manager, cfg *config.Config) *Updater {
 	return &Updater{
-		domainMgr:  domainMgr,
-		ipRangeMgr: ipRangeMgr,
-		config:     cfg,
-		stopChan:   make(chan struct{}),
+		domainMgr: domainMgr,
+		config:    cfg,
+		stopChan:  make(chan struct{}),
 	}
 }
 
@@ -57,12 +54,6 @@ func (u *Updater) run() {
 	if u.config.ChinaDomains.UpdateInterval > 0 {
 		go u.updateChinaDomainsPeriodically()
 	}
-
-	for name, source := range u.config.OverseasIPRanges.Sources {
-		if source.UpdateInterval > 0 {
-			go u.updateIPRangePeriodically(name, source.UpdateInterval)
-		}
-	}
 }
 
 func (u *Updater) updateChinaDomainsPeriodically() {
@@ -78,35 +69,10 @@ func (u *Updater) updateChinaDomainsPeriodically() {
 	}
 }
 
-func (u *Updater) updateIPRangePeriodically(name string, interval int) {
-	ticker := time.NewTicker(time.Duration(interval) * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-u.stopChan:
-			return
-		case <-ticker.C:
-			u.updateIPRange(name)
-		}
-	}
-}
-
 // UpdateAll 立即更新所有数据
 func (u *Updater) UpdateAll() error {
-	var errs []error
-
 	if err := u.updateChinaDomains(); err != nil {
-		errs = append(errs, fmt.Errorf("更新中国域名失败: %w", err))
-	}
-
-	for name := range u.config.OverseasIPRanges.Sources {
-		if err := u.updateIPRange(name); err != nil {
-			errs = append(errs, fmt.Errorf("更新 %s IP段失败: %w", name, err))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("更新过程中发生 %d 个错误", len(errs))
+		return fmt.Errorf("更新中国域名失败: %w", err)
 	}
 	return nil
 }
@@ -130,25 +96,6 @@ func (u *Updater) updateChinaDomains() error {
 	return nil
 }
 
-// updateIPRange 更新指定服务的IP段
-func (u *Updater) updateIPRange(name string) error {
-	source, ok := u.config.OverseasIPRanges.Sources[name]
-	if !ok || source.URL == "" {
-		return nil
-	}
-
-	log.Printf("[UPDATER] 开始更新 %s IP段...", name)
-	start := time.Now()
-
-	if err := u.ipRangeMgr.Update(); err != nil {
-		log.Printf("[UPDATER] 更新 %s IP段失败: %v", name, err)
-		return err
-	}
-
-	log.Printf("[UPDATER] %s IP段更新完成，耗时 %v", name, time.Since(start))
-	return nil
-}
-
 // ForceUpdate 强制立即更新
 func (u *Updater) ForceUpdate(ctx context.Context) error {
 	done := make(chan error, 1)
@@ -169,6 +116,5 @@ func (u *Updater) ForceUpdate(ctx context.Context) error {
 func (u *Updater) GetStatus() map[string]interface{} {
 	return map[string]interface{}{
 		"china_domains_count": u.domainMgr.GetDomainCount(),
-		"ip_range_services":   u.ipRangeMgr.GetAllServices(),
 	}
 }

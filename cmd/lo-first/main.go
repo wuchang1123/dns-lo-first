@@ -10,7 +10,6 @@ import (
 
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
-	"lo-dns/internal/iprange"
 	"lo-dns/internal/poison"
 	"lo-dns/internal/server"
 	"lo-dns/internal/updater"
@@ -54,22 +53,14 @@ func main() {
 		log.Printf("加载中国域名列表失败: %v", err)
 	}
 
-	// 创建IP段管理器
-	ipRangeMgr := iprange.NewManager(cfg.OverseasIPRanges)
-
-	// 加载IP段
-	if err := ipRangeMgr.Load(); err != nil {
-		log.Printf("加载IP段失败: %v", err)
-	}
-
 	// 创建判毒检查器
 	poisonChecker := poison.NewChecker(cfg.PoisonCheck)
 
 	// 创建DNS服务器
-	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, ipRangeMgr, poisonChecker)
+	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)
 
 	// 创建更新器
-	updater := updater.NewUpdater(domainMgr, ipRangeMgr, cfg)
+	updater := updater.NewUpdater(domainMgr, cfg)
 
 	// 如果仅更新数据
 	if *updateOnly {

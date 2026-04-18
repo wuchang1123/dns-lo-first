@@ -8,9 +8,9 @@
 
 - **本地优先**: 无污染本地优先原则
 - **智能分流**: 自动区分中国域名和海外域名
-- **判毒系统**: TLS证书验证 + IP段匹配，防止DNS污染
+- **判毒系统**: TLS证书验证，防止DNS污染
 - **多上游支持**: 同时支持本地（国内）和海外DNS上游
-- **定时更新**: 自动更新中国域名列表和海外服务IP段
+- **定时更新**: 自动更新中国域名列表
 - **高性能**: 并发查询、智能缓存
 
 ## 架构
@@ -35,8 +35,7 @@ DNS请求 -> 缓存检查 -> 域名分类 -> 查询策略
 判毒系统用于检测DNS响应是否被污染：
 
 1. **TLS证书验证**: 对返回的IP进行TLS握手，验证证书是否匹配域名（SNI=域名）
-2. **IP段匹配**: 检查IP是否在已知的海外服务IP段内
-3. **并发检查**: 支持并发检查多个IP
+2. **并发检查**: 支持并发检查多个IP
 
 如果判毒通过，直接使用本地DNS结果（速度快）；
 如果判毒不通过，等待海外DNS结果（干净）。
@@ -120,13 +119,6 @@ china_domains:
   file_path: "./data/china_domains.txt"
   update_interval: 24    # 更新间隔（小时）
 
-overseas_ip_ranges:
-  sources:
-    google:
-      url: "https://www.gstatic.com/ipranges/goog.json"
-      file_path: "./data/google_ips.txt"
-      update_interval: 24
-
 poison_check:
   enabled: true
   tls_timeout: 5
@@ -174,7 +166,6 @@ dns-lo-first/
 ├── internal/
 │   ├── config/               # 配置管理
 │   ├── domain/               # 中国域名管理
-│   ├── iprange/              # IP段管理
 │   ├── poison/               # 判毒系统
 │   ├── server/               # DNS服务器
 │   ├── upstream/             # 上游DNS管理
@@ -199,7 +190,7 @@ dns-lo-first/
    - 中国域名：直接查询本地DNS
    - 海外域名：并发查询本地+海外DNS
 4. **判毒检查**（仅海外域名）:
-   - 对本地DNS返回的IP进行TLS验证和IP段检查
+   - 对本地DNS返回的IP进行TLS验证
    - 通过：直接返回本地结果
    - 不通过：等待并返回海外DNS结果
 5. **返回响应**: 将结果返回给客户端并缓存

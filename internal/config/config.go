@@ -9,11 +9,10 @@ import (
 
 // Config 总配置结构
 type Config struct {
-	Server           ServerConfig           `yaml:"server"`
-	Upstream         UpstreamConfig         `yaml:"upstream"`
-	ChinaDomains     ChinaDomainsConfig     `yaml:"china_domains"`
-	OverseasIPRanges OverseasIPRangesConfig `yaml:"overseas_ip_ranges"`
-	PoisonCheck      PoisonCheckConfig      `yaml:"poison_check"`
+	Server       ServerConfig       `yaml:"server"`
+	Upstream     UpstreamConfig     `yaml:"upstream"`
+	ChinaDomains ChinaDomainsConfig `yaml:"china_domains"`
+	PoisonCheck  PoisonCheckConfig  `yaml:"poison_check"`
 }
 
 // ServerConfig DNS服务器配置
@@ -34,19 +33,6 @@ type ChinaDomainsConfig struct {
 	FilePath       string   `yaml:"file_path"`
 	UpdateInterval int      `yaml:"update_interval"`
 	Custom         []string `yaml:"custom"`
-}
-
-// OverseasIPRangesConfig 海外IP段配置
-type OverseasIPRangesConfig struct {
-	Sources map[string]IPRangeSource `yaml:"sources"`
-	Custom  map[string][]string      `yaml:"custom"`
-}
-
-// IPRangeSource IP段数据源
-type IPRangeSource struct {
-	URL            string `yaml:"url"`
-	FilePath       string `yaml:"file_path"`
-	UpdateInterval int    `yaml:"update_interval"`
 }
 
 // PoisonCheckConfig 判毒系统配置
