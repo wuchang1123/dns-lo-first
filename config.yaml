@@ -52,4 +52,4 @@ poison_check:
   # 缓存刷新间隔（分钟），0表示禁用
   cache_refresh_interval: 30
   # 缓存过期时间（分钟）
-  cache_ttl: 720 # 12小时
+  cache_ttl: 32
