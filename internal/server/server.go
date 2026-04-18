@@ -328,7 +328,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 					// 随机选择最多1个IP进行检查
 					ips := randomSelectIPs(allIps)
 
-					// 进行判毒检查
+					// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
 					checkResult := s.poisonChecker.Check(domain, ips, "local")
 					log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
 						domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
@@ -370,7 +370,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						// 随机选择一个IP
 						selectedIPs := randomSelectIPs(ips)
 						if len(selectedIPs) > 0 {
-							// 进行TLS验证
+							// 进行TLS验证（使用原始域名，因为CDN证书通常对原始域名有效）
 							checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
 							log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 								domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
@@ -434,7 +434,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			// 随机选择最多1个IP进行检查
 			ips := randomSelectIPs(allIps)
 
-			// 进行判毒检查
+			// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
 			checkResult := s.poisonChecker.Check(domain, ips, "local")
 			log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
 				domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
@@ -486,7 +486,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 				// 随机选择一个IP
 				selectedIPs := randomSelectIPs(ips)
 				if len(selectedIPs) > 0 {
-					// 进行TLS验证
+					// 进行TLS验证（使用原始域名，因为CDN证书通常对原始域名有效）
 					checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
 					log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 						domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
@@ -548,6 +548,18 @@ func extractIPs(msg *dns.Msg) []net.IP {
 		}
 	}
 	return ips
+}
+
+// getTargetDomain 从DNS响应中获取目标域名（处理CNAME）
+func getTargetDomain(msg *dns.Msg, originalDomain string) string {
+	for _, rr := range msg.Answer {
+		if cname, ok := rr.(*dns.CNAME); ok {
+			// 找到CNAME记录，返回目标域名（去除末尾的点）
+			return strings.TrimSuffix(cname.Target, ".")
+		}
+	}
+	// 没有CNAME记录，返回原始域名
+	return originalDomain
 }
 
 // randomSelectIPs 随机选择最多1个IP
