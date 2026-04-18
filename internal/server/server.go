@@ -84,6 +84,8 @@ func (s *Server) Start() error {
 
 // ServeDNS 处理DNS请求
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
+	start := time.Now()
+
 	if len(r.Question) == 0 || r.Question[0].Qtype != dns.TypeA {
 		dns.HandleFailed(w, r)
 		return
@@ -156,7 +158,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		s.dnsCache.Set(domain, pending.result)
 	}
 
-	log.Printf("[QUERY OK] %s -> 响应 %d 个等待者", domain, len(waiters))
+	log.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), time.Since(start))
 }
 
 // queryLocalOnly 只查询本地DNS
