@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -32,7 +34,20 @@ jobs:
       - name: Build macOS AMD64
         run: GOOS=darwin GOARCH=amd64 go build -o bin/lo-first-darwin-amd64 ./cmd/lo-first/
 
+      - name: Commit binaries
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add bin/
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "ci: update binaries [skip ci]"
+            git push
+          fi
+
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: binaries
