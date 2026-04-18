@@ -48,9 +48,9 @@ func main() {
 	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
 
 	// 创建域名管理器
-	domainMgr := domain.NewManager(cfg.MotherlandDomains)
+	domainMgr := domain.NewManager(cfg.LocalDomains)
 	if err := domainMgr.Load(); err != nil {
-		log.Printf("加载母国域名列表失败: %v", err)
+		log.Printf("加载所在国域名列表失败: %v", err)
 	}
 
 	// 创建判毒检查器

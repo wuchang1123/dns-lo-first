@@ -120,10 +120,10 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	var response *dns.Msg
 	var err error
 
-	isMotherlandDomain := s.domainMgr.IsMotherlandDomain(domain)
+	isLocalDomain := s.domainMgr.IsLocalDomain(domain)
 
-	if isMotherlandDomain {
-		log.Printf("[MOTHERLAND DOMAIN] %s -> 使用本地DNS", domain)
+	if isLocalDomain {
+		log.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
 		response, err = s.queryLocalOnly(r)
 	} else {
 		response, err = s.queryWithPoisonCheck(r, domain)

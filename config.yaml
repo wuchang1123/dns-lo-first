@@ -20,8 +20,8 @@ upstream:
     - "8.8.4.4:53"        # Google DNS备用
     - "1.1.1.1:53"        # Cloudflare DNS
 
-# 母国域名列表配置
-motherland_domains:
+# 所在国域名列表配置
+local_domains:
   # 数据源URL
   source_url: "https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
   # 本地文件路径

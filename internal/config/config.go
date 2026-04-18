@@ -9,10 +9,10 @@ import (
 
 // Config 总配置结构
 type Config struct {
-	Server            ServerConfig            `yaml:"server"`
-	Upstream          UpstreamConfig          `yaml:"upstream"`
-	MotherlandDomains MotherlandDomainsConfig `yaml:"motherland_domains"`
-	PoisonCheck       PoisonCheckConfig       `yaml:"poison_check"`
+	Server       ServerConfig       `yaml:"server"`
+	Upstream     UpstreamConfig     `yaml:"upstream"`
+	LocalDomains LocalDomainsConfig `yaml:"local_domains"`
+	PoisonCheck  PoisonCheckConfig  `yaml:"poison_check"`
 }
 
 // ServerConfig DNS服务器配置
@@ -27,8 +27,8 @@ type UpstreamConfig struct {
 	Overseas []string `yaml:"overseas"`
 }
 
-// MotherlandDomainsConfig 母国域名配置
-type MotherlandDomainsConfig struct {
+// LocalDomainsConfig 所在国域名配置
+type LocalDomainsConfig struct {
 	SourceURL      string   `yaml:"source_url"`
 	FilePath       string   `yaml:"file_path"`
 	UpdateInterval int      `yaml:"update_interval"`
