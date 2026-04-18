@@ -52,39 +52,41 @@ func (u *Updater) Stop() {
 
 // run 运行更新循环
 func (u *Updater) run() {
-	// 立即执行一次更新
 	u.UpdateAll()
 
-	// 设置定时器
-	chinaTicker := time.NewTicker(time.Duration(u.config.ChinaDomains.UpdateInterval) * time.Hour)
-	defer chinaTicker.Stop()
-
-	// 为每个IP段源设置定时器
-	ipRangeTickers := make(map[string]*time.Ticker)
-	for name, source := range u.config.OverseasIPRanges.Sources {
-		ticker := time.NewTicker(time.Duration(source.UpdateInterval) * time.Hour)
-		ipRangeTickers[name] = ticker
-		defer ticker.Stop()
+	if u.config.ChinaDomains.UpdateInterval > 0 {
+		go u.updateChinaDomainsPeriodically()
 	}
 
+	for name, source := range u.config.OverseasIPRanges.Sources {
+		if source.UpdateInterval > 0 {
+			go u.updateIPRangePeriodically(name, source.UpdateInterval)
+		}
+	}
+}
+
+func (u *Updater) updateChinaDomainsPeriodically() {
+	ticker := time.NewTicker(time.Duration(u.config.ChinaDomains.UpdateInterval) * time.Hour)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-u.stopChan:
 			return
+		case <-ticker.C:
+			u.updateChinaDomains()
+		}
+	}
+}
 
-		case <-chinaTicker.C:
-			go u.updateChinaDomains()
-
-		default:
-			// 检查IP段更新
-			for name, ticker := range ipRangeTickers {
-				select {
-				case <-ticker.C:
-					go u.updateIPRange(name)
-				default:
-				}
-			}
-			time.Sleep(time.Minute) // 避免CPU空转
+func (u *Updater) updateIPRangePeriodically(name string, interval int) {
+	ticker := time.NewTicker(time.Duration(interval) * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-u.stopChan:
+			return
+		case <-ticker.C:
+			u.updateIPRange(name)
 		}
 	}
 }
