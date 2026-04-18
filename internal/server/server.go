@@ -300,108 +300,45 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 		// 记录日志
 		log.Printf("[CACHE PASS] %s -> 从缓存返回 %d 个通过的IP", domain, len(passedIPs))
 
-		// 在后台继续执行后续程序（查询本地和海外DNS）
+		// 在后台继续执行后续程序（查询所有海外DNS并更新缓存）
 		go func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			// 并发查询本地和海外DNS
-			localChan := make(chan *upstream.Result, 1)
-			overseasChan := make(chan *upstream.Result, 1)
+			// 并发查询所有海外DNS服务器
+			allOverseasResults := s.upstreamMgr.QueryAllOverseas(ctx, r)
 
-			go func() {
-				localChan <- s.upstreamMgr.QueryLocal(ctx, r)
-			}()
+			// 收集所有验证通过的IP
+			allValidatedIPs := make(map[string]bool)
 
-			go func() {
-				overseasChan <- s.upstreamMgr.QueryOverseas(ctx, r)
-			}()
-
-			var localResult, overseasResult *upstream.Result
-
-			// 等待本地结果
-			select {
-			case localResult = <-localChan:
-				if localResult.Err == nil && localResult.Response != nil {
-					// 获取本地返回的IP列表
-					allIps := extractIPs(localResult.Response)
-					// 随机选择最多1个IP进行检查
-					ips := randomSelectIPs(allIps)
-
-					// 进行判毒检查
-					checkResult := s.poisonChecker.Check(domain, ips, "local")
-					log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
-						domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
-
-					// 在后台对剩余IP进行TLS验证并缓存结果
-					if len(allIps) > 1 {
-						go func() {
-							remainingIPs := make([]net.IP, 0, len(allIps)-1)
-							for _, ip := range allIps {
-								found := false
-								for _, selectedIP := range ips {
-									if ip.Equal(selectedIP) {
-										found = true
-										break
-									}
-								}
-								if !found {
-									remainingIPs = append(remainingIPs, ip)
-								}
+			// 验证所有海外DNS返回的IP
+			for _, overseasResult := range allOverseasResults {
+				if overseasResult.Err == nil && overseasResult.Response != nil {
+					ips := extractIPs(overseasResult.Response)
+					for _, ip := range ips {
+						// 检查缓存中是否已验证
+						passed, _, found := s.poisonChecker.GetFromCache(domain, ip)
+						if found && passed {
+							allValidatedIPs[ip.String()] = true
+						} else if !found {
+							// 未验证，进行TLS验证
+							checkResult := s.poisonChecker.Check(domain, []net.IP{ip}, "overseas")
+							if checkResult.Passed {
+								allValidatedIPs[ip.String()] = true
 							}
-							if len(remainingIPs) > 0 {
-								s.poisonChecker.Check(domain, remainingIPs, "local")
-								log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
-							}
-						}()
+						}
 					}
 				}
-			case <-time.After(3 * time.Second):
-				log.Printf("[TIMEOUT] %s -> 本地DNS超时", domain)
 			}
 
-			// 等待海外结果（如果需要）
-			select {
-			case overseasResult = <-overseasChan:
-				if overseasResult.Err == nil && overseasResult.Response != nil {
-					// 提取IP并进行TLS验证
-					ips := extractIPs(overseasResult.Response)
-					if len(ips) > 0 {
-						// 随机选择一个IP
-						selectedIPs := randomSelectIPs(ips)
-						if len(selectedIPs) > 0 {
-							// 进行TLS验证
-							checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
-							log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
-								domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
-						}
-
-						// 在后台对剩余IP进行TLS验证并缓存结果
-						if len(ips) > 1 {
-							go func() {
-								remainingIPs := make([]net.IP, 0, len(ips)-1)
-								for _, ip := range ips {
-									found := false
-									for _, selectedIP := range selectedIPs {
-										if ip.Equal(selectedIP) {
-											found = true
-											break
-										}
-									}
-									if !found {
-										remainingIPs = append(remainingIPs, ip)
-									}
-								}
-								if len(remainingIPs) > 0 {
-									s.poisonChecker.Check(domain, remainingIPs, "overseas")
-									log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
-								}
-							}()
-						}
-					}
+			// 更新缓存
+			if len(allValidatedIPs) > 0 && s.dnsCache != nil {
+				validatedIPList := make([]string, 0, len(allValidatedIPs))
+				for ip := range allValidatedIPs {
+					validatedIPList = append(validatedIPList, ip)
 				}
-			case <-time.After(5 * time.Second):
-				log.Printf("[TIMEOUT] %s -> 海外DNS超时", domain)
+				s.dnsCache.UpdateResponse(domain, validatedIPList)
+				log.Printf("[CACHE UPDATE] %s: 后台更新 %d 个验证通过的海外IP", domain, len(validatedIPList))
 			}
 		}()
 

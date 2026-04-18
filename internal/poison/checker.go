@@ -132,6 +132,11 @@ func (c *Checker) checkAndSyncCacheFile() {
 	}
 }
 
+// GetFromCache 从缓存获取结果（公共方法）
+func (c *Checker) GetFromCache(domain string, ip net.IP) (bool, string, bool) {
+	return c.getFromCache(domain, ip)
+}
+
 // getFromCache 从缓存获取结果
 func (c *Checker) getFromCache(domain string, ip net.IP) (bool, string, bool) {
 	// 先检查并同步缓存文件状态
