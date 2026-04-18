@@ -12,9 +12,10 @@ import (
 )
 
 type Manager struct {
-	config  Config
-	domains map[string]struct{}
-	mu      sync.RWMutex
+	config   Config
+	domains  map[string]struct{}
+	overpass map[string]struct{}
+	mu       sync.RWMutex
 }
 
 type Config struct {
@@ -22,12 +23,14 @@ type Config struct {
 	FilePath       string   `yaml:"file_path"`
 	UpdateInterval int      `yaml:"update_interval"`
 	Custom         []string `yaml:"custom"`
+	Overpass       []string `yaml:"overpass"`
 }
 
 func NewManager(cfg Config) *Manager {
 	return &Manager{
-		config:  cfg,
-		domains: make(map[string]struct{}),
+		config:   cfg,
+		domains:  make(map[string]struct{}),
+		overpass: make(map[string]struct{}),
 	}
 }
 
@@ -41,6 +44,12 @@ func (m *Manager) Load() error {
 	// 加载自定义域名
 	for _, domain := range m.config.Custom {
 		m.domains[normalizeDomain(domain)] = struct{}{}
+	}
+
+	// 加载overpass域名
+	m.overpass = make(map[string]struct{})
+	for _, domain := range m.config.Overpass {
+		m.overpass[normalizeDomain(domain)] = struct{}{}
 	}
 
 	// 从文件加载
@@ -162,6 +171,30 @@ func (m *Manager) IsLocalDomain(domain string) bool {
 	for i := 1; i < len(parts); i++ {
 		parent := strings.Join(parts[i:], ".")
 		if _, ok := m.domains[parent]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+// IsOverpassDomain 检查是否为overpass域名（直接跳过本地DNS查询）
+func (m *Manager) IsOverpassDomain(domain string) bool {
+	domain = normalizeDomain(domain)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// 精确匹配
+	if _, ok := m.overpass[domain]; ok {
+		return true
+	}
+
+	// 检查父域名（以这些域名结束的泛域名）
+	parts := strings.Split(domain, ".")
+	for i := 1; i < len(parts); i++ {
+		parent := strings.Join(parts[i:], ".")
+		if _, ok := m.overpass[parent]; ok {
 			return true
 		}
 	}

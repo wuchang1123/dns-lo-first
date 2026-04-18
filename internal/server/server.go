@@ -120,13 +120,21 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	var response *dns.Msg
 	var err error
 
-	isLocalDomain := s.domainMgr.IsLocalDomain(domain)
-
-	if isLocalDomain {
-		log.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
-		response, err = s.queryLocalOnly(r)
+	// 检查是否为overpass域名（直接跳过本地DNS查询）
+	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
+	if isOverpassDomain {
+		log.Printf("[OVERPASS DOMAIN] %s -> 直接使用海外DNS", domain)
+		response, err = s.queryOverseasOnly(r)
 	} else {
-		response, err = s.queryWithPoisonCheck(r, domain)
+		// 检查是否为本地域名
+		isLocalDomain := s.domainMgr.IsLocalDomain(domain)
+
+		if isLocalDomain {
+			log.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
+			response, err = s.queryLocalOnly(r)
+		} else {
+			response, err = s.queryWithPoisonCheck(r, domain)
+		}
 	}
 
 	// 处理结果
@@ -161,6 +169,15 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 // queryLocalOnly 只查询本地DNS
 func (s *Server) queryLocalOnly(r *dns.Msg) (*dns.Msg, error) {
 	result := s.upstreamMgr.QueryLocal(context.Background(), r)
+	if result.Err != nil {
+		return nil, result.Err
+	}
+	return result.Response, nil
+}
+
+// queryOverseasOnly 只使用海外DNS查询
+func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
+	result := s.upstreamMgr.QueryOverseas(context.Background(), r)
 	if result.Err != nil {
 		return nil, result.Err
 	}
