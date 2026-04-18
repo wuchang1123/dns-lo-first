@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -62,14 +63,43 @@ func main() {
 	}
 
 	// 设置日志输出到文件（按日期每天一个文件）
-	dateStr := time.Now().Format("2006-01-02")
-	logFile := filepath.Join(logDir, fmt.Sprintf("lo-first-%s.log", dateStr))
-	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
+	var logFile *os.File
+	var currentDateStr string
+	var logMutex sync.Mutex
+
+	rotateLogFile := func() error {
+		dateStr := time.Now().Format("2006-01-02")
+		if dateStr == currentDateStr && logFile != nil {
+			return nil
+		}
+		logFilePath := filepath.Join(logDir, fmt.Sprintf("lo-first-%s.log", dateStr))
+		f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			return err
+		}
+		if logFile != nil {
+			logFile.Close()
+		}
+		logFile = f
+		currentDateStr = dateStr
+		log.SetOutput(f)
+		log.Printf("[LOG ROTATE] 日志文件轮转到: %s", dateStr)
+		return nil
+	}
+
+	if err := rotateLogFile(); err != nil {
 		log.Fatalf("打开日志文件失败: %v", err)
 	}
-	defer f.Close()
-	log.SetOutput(f)
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			logMutex.Lock()
+			rotateLogFile()
+			logMutex.Unlock()
+		}
+	}()
 
 	log.Printf("[%s] 启动中...", AppName)
 	log.Printf("配置文件: %s", *configPath)
