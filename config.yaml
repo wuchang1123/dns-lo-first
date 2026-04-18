@@ -49,3 +49,5 @@ poison_check:
   tls_port: 443
   # IP段匹配严格模式
   strict_mode: true
+  # 缓存自动更新间隔（小时）
+  cache_update_interval: 1

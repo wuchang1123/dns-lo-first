@@ -37,11 +37,12 @@ type ChinaDomainsConfig struct {
 
 // PoisonCheckConfig 判毒系统配置
 type PoisonCheckConfig struct {
-	Enabled          bool `yaml:"enabled"`
-	TLSTimeout       int  `yaml:"tls_timeout"`
-	ConcurrentChecks int  `yaml:"concurrent_checks"`
-	TLSPort          int  `yaml:"tls_port"`
-	StrictMode       bool `yaml:"strict_mode"`
+	Enabled             bool `yaml:"enabled"`
+	TLSTimeout          int  `yaml:"tls_timeout"`
+	ConcurrentChecks    int  `yaml:"concurrent_checks"`
+	TLSPort             int  `yaml:"tls_port"`
+	StrictMode          bool `yaml:"strict_mode"`
+	CacheUpdateInterval int  `yaml:"cache_update_interval"`
 }
 
 // Load 加载配置文件
@@ -71,6 +72,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.PoisonCheck.TLSPort == 0 {
 		cfg.PoisonCheck.TLSPort = 443
+	}
+	if cfg.PoisonCheck.CacheUpdateInterval == 0 {
+		cfg.PoisonCheck.CacheUpdateInterval = 1 // 默认1小时
 	}
 
 	return &cfg, nil

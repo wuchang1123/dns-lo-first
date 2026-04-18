@@ -160,7 +160,9 @@ func (c *Checker) getFromCache(domain string, ip net.IP) (bool, string, bool) {
 
 // startCacheUpdater 启动后台缓存更新任务
 func (c *Checker) startCacheUpdater() {
-	ticker := time.NewTicker(1 * time.Hour) // 每小时更新一次
+	// 使用配置中的更新间隔
+	interval := time.Duration(c.config.CacheUpdateInterval) * time.Hour
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// 初始运行一次
