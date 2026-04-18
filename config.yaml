@@ -52,6 +52,10 @@ overseas_ip_ranges:
       url: "https://raw.githubusercontent.com/lord-alfred/ipranges/main/facebook/ipv4_merged.txt"
       file_path: "./data/facebook_ips.txt"
       update_interval: 24
+    twitter:
+      url: "https://raw.githubusercontent.com/lord-alfred/ipranges/main/twitter/ipv4_merged.txt"
+      file_path: "./data/twitter_ips.txt"
+      update_interval: 24
 
   # 自定义IP段
   custom:
@@ -70,6 +74,12 @@ overseas_ip_ranges:
       - "179.60.192.0/22"
       - "185.60.216.0/22"
       - "203.104.144.0/21"
+    twitter:
+      - "104.244.42.0/21"
+      - "104.244.46.0/23"
+      - "192.133.76.0/22"
+      - "199.16.156.0/22"
+      - "199.59.148.0/22"
 
 # 判毒系统配置
 poison_check:
