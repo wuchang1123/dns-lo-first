@@ -1,6 +1,6 @@
 module lo-dns
 
-go 1.21
+go 1.22
 
 require (
 	github.com/miekg/dns v1.1.57
