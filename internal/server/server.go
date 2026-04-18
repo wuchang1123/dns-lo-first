@@ -332,7 +332,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 					ips := randomSelectIPs(allIps)
 
 					// 进行判毒检查
-					checkResult := s.poisonChecker.Check(domain, ips)
+					checkResult := s.poisonChecker.Check(domain, ips, "local")
 					log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
 						domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
@@ -353,7 +353,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 								}
 							}
 							if len(remainingIPs) > 0 {
-								s.poisonChecker.Check(domain, remainingIPs)
+								s.poisonChecker.Check(domain, remainingIPs, "local")
 								log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 							}
 						}()
@@ -374,7 +374,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						selectedIPs := randomSelectIPs(ips)
 						if len(selectedIPs) > 0 {
 							// 进行TLS验证
-							checkResult := s.poisonChecker.Check(domain, selectedIPs)
+							checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
 							log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 								domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 						}
@@ -396,7 +396,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 									}
 								}
 								if len(remainingIPs) > 0 {
-									s.poisonChecker.Check(domain, remainingIPs)
+									s.poisonChecker.Check(domain, remainingIPs, "overseas")
 									log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 								}
 							}()
@@ -438,7 +438,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			ips := randomSelectIPs(allIps)
 
 			// 进行判毒检查
-			checkResult := s.poisonChecker.Check(domain, ips)
+			checkResult := s.poisonChecker.Check(domain, ips, "local")
 			log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
 				domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
@@ -463,7 +463,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 							}
 						}
 						if len(remainingIPs) > 0 {
-							s.poisonChecker.Check(domain, remainingIPs)
+							s.poisonChecker.Check(domain, remainingIPs, "local")
 							log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 						}
 					}()
@@ -490,7 +490,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 				selectedIPs := randomSelectIPs(ips)
 				if len(selectedIPs) > 0 {
 					// 进行TLS验证
-					checkResult := s.poisonChecker.Check(domain, selectedIPs)
+					checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
 					log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 						domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
@@ -521,7 +521,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 							}
 						}
 						if len(remainingIPs) > 0 {
-							s.poisonChecker.Check(domain, remainingIPs)
+							s.poisonChecker.Check(domain, remainingIPs, "overseas")
 							log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 						}
 					}()
@@ -554,6 +554,10 @@ func randomSelectIPs(ips []net.IP) []net.IP {
 	if len(ips) <= 1 {
 		return ips
 	}
-	rand.Shuffle(len(ips), func(i, j int) { ips[i], ips[j] = ips[j], ips[i] })
+	// 使用Fisher-Yates算法随机打乱切片
+	for i := len(ips) - 1; i > 0; i-- {
+		j := rand.IntN(i + 1)
+		ips[i], ips[j] = ips[j], ips[i]
+	}
 	return ips[:1]
 }

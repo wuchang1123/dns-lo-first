@@ -22,6 +22,7 @@ type cacheEntry struct {
 	Passed    bool      `json:"passed"`
 	Reason    string    `json:"reason"`
 	ExpiresAt time.Time `json:"expiresAt"`
+	Source    string    `json:"source"` // local 或 overseas
 }
 
 // cacheData 缓存数据结构：域名 -> IP -> 缓存项
@@ -156,7 +157,7 @@ func (c *Checker) getFromCache(domain string, ip net.IP) (bool, string, bool) {
 }
 
 // setCache 设置缓存
-func (c *Checker) setCache(domain string, ip net.IP, passed bool, reason string) {
+func (c *Checker) setCache(domain string, ip net.IP, passed bool, reason string, source string) {
 	c.cacheMu.Lock()
 	if c.cache[domain] == nil {
 		c.cache[domain] = make(map[string]*cacheEntry)
@@ -165,6 +166,7 @@ func (c *Checker) setCache(domain string, ip net.IP, passed bool, reason string)
 		Passed:    passed,
 		Reason:    reason,
 		ExpiresAt: time.Now().Add(c.cacheTTL),
+		Source:    source,
 	}
 	c.cacheMu.Unlock()
 
@@ -293,7 +295,7 @@ func (c *Checker) loadCache() {
 }
 
 // Check 对域名和IP列表进行判毒检查
-func (c *Checker) Check(domain string, ips []net.IP) *CheckResult {
+func (c *Checker) Check(domain string, ips []net.IP, source string) *CheckResult {
 	if !c.config.Enabled {
 		return &CheckResult{Passed: true, Reason: "check disabled"}
 	}
@@ -319,10 +321,10 @@ func (c *Checker) Check(domain string, ips []net.IP) *CheckResult {
 		wg.Add(1)
 		go func(ip net.IP) {
 			defer wg.Done()
-			c.sem <- struct{}{}        // 获取信号量
-			defer func() { <-c.sem }() // 释放信号量
+			c.sem <- struct{}{}
+			defer func() { <-c.sem }()
 
-			checkResult := c.checkTLS(domain, ip)
+			checkResult := c.checkTLS(domain, ip, source)
 			resultChan <- checkResult
 		}(ip)
 	}
@@ -364,7 +366,7 @@ type tlsCheckResult struct {
 }
 
 // checkTLS 对单个IP进行检查（优先IP段检查）
-func (c *Checker) checkTLS(domain string, ip net.IP) *tlsCheckResult {
+func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckResult {
 	// 检查缓存
 	if passed, _, found := c.getFromCache(domain, ip); found {
 		result := &tlsCheckResult{
@@ -382,21 +384,18 @@ func (c *Checker) checkTLS(domain string, ip net.IP) *tlsCheckResult {
 	// 1. 优先检查IP是否在已知服务IP段内
 	service := c.ipRange.FindService(ip)
 	if service != "" {
-		// IP在已知服务段内，直接通过
 		result.success = true
-		c.setCache(domain, ip, true, "IP in known range")
+		c.setCache(domain, ip, true, "IP in known range", source)
 		return result
 	}
 
 	// 2. IP不在IP段内，进行TLS握手验证
-	// 构建TLS配置
 	conf := &tls.Config{
 		ServerName:         domain,
 		InsecureSkipVerify: false,
 		MinVersion:         tls.VersionTLS12,
 	}
 
-	// 尝试连接
 	addr := net.JoinHostPort(ip.String(), fmt.Sprintf("%d", c.config.TLSPort))
 	dialer := &net.Dialer{
 		Timeout: time.Duration(c.config.TLSTimeout) * time.Second,
@@ -405,29 +404,27 @@ func (c *Checker) checkTLS(domain string, ip net.IP) *tlsCheckResult {
 	conn, err := tls.DialWithDialer(dialer, "tcp", addr, conf)
 	if err != nil {
 		result.err = fmt.Sprintf("TLS handshake failed: %v", err)
-		c.setCache(domain, ip, false, result.err)
+		c.setCache(domain, ip, false, result.err, source)
 		return result
 	}
 	defer conn.Close()
 
-	// 获取证书信息
 	state := conn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
 		result.err = "no certificates found"
-		c.setCache(domain, ip, false, result.err)
+		c.setCache(domain, ip, false, result.err, source)
 		return result
 	}
 
-	// 验证证书是否匹配域名
 	cert := state.PeerCertificates[0]
 	if err := verifyCertDomain(cert, domain); err != nil {
 		result.err = fmt.Sprintf("certificate domain mismatch: %v", err)
-		c.setCache(domain, ip, false, result.err)
+		c.setCache(domain, ip, false, result.err, source)
 		return result
 	}
 
 	result.success = true
-	c.setCache(domain, ip, true, "TLS handshake successful")
+	c.setCache(domain, ip, true, "TLS handshake successful", source)
 	return result
 }
 
