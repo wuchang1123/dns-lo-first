@@ -1,7 +1,7 @@
-.PHONY: all linux linux-arm64 linux-arm macos clean install uninstall
+.PHONY: all linux linux-arm64 linux-arm macos macos-amd64 clean install uninstall
 
 # 编译所有平台
-all: linux linux-arm64 linux-arm macos
+all: linux linux-arm64 linux-arm macos macos-amd64
 
 # Linux AMD64
 linux:
