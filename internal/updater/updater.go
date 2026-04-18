@@ -51,48 +51,48 @@ func (u *Updater) Stop() {
 func (u *Updater) run() {
 	u.UpdateAll()
 
-	if u.config.ChinaDomains.UpdateInterval > 0 {
-		go u.updateChinaDomainsPeriodically()
+	if u.config.MotherlandDomains.UpdateInterval > 0 {
+		go u.updateMotherlandDomainsPeriodically()
 	}
 }
 
-func (u *Updater) updateChinaDomainsPeriodically() {
-	ticker := time.NewTicker(time.Duration(u.config.ChinaDomains.UpdateInterval) * time.Hour)
+func (u *Updater) updateMotherlandDomainsPeriodically() {
+	ticker := time.NewTicker(time.Duration(u.config.MotherlandDomains.UpdateInterval) * time.Hour)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-u.stopChan:
 			return
 		case <-ticker.C:
-			u.updateChinaDomains()
+			u.updateMotherlandDomains()
 		}
 	}
 }
 
 // UpdateAll 立即更新所有数据
 func (u *Updater) UpdateAll() error {
-	if err := u.updateChinaDomains(); err != nil {
-		return fmt.Errorf("更新中国域名失败: %w", err)
+	if err := u.updateMotherlandDomains(); err != nil {
+		return fmt.Errorf("更新母国域名失败: %w", err)
 	}
 	return nil
 }
 
-// updateChinaDomains 更新中国域名列表
-func (u *Updater) updateChinaDomains() error {
-	if u.config.ChinaDomains.SourceURL == "" {
+// updateMotherlandDomains 更新母国域名列表
+func (u *Updater) updateMotherlandDomains() error {
+	if u.config.MotherlandDomains.SourceURL == "" {
 		return nil
 	}
 
-	log.Println("[UPDATER] 开始更新中国域名列表...")
+	log.Println("[UPDATER] 开始更新母国域名列表...")
 	start := time.Now()
 
 	if err := u.domainMgr.Update(); err != nil {
-		log.Printf("[UPDATER] 更新中国域名列表失败: %v", err)
+		log.Printf("[UPDATER] 更新母国域名列表失败: %v", err)
 		return err
 	}
 
 	count := u.domainMgr.GetDomainCount()
-	log.Printf("[UPDATER] 中国域名列表更新完成，共 %d 个域名，耗时 %v", count, time.Since(start))
+	log.Printf("[UPDATER] 母国域名列表更新完成，共 %d 个域名，耗时 %v", count, time.Since(start))
 	return nil
 }
 
@@ -115,6 +115,6 @@ func (u *Updater) ForceUpdate(ctx context.Context) error {
 // GetStatus 获取更新器状态
 func (u *Updater) GetStatus() map[string]interface{} {
 	return map[string]interface{}{
-		"china_domains_count": u.domainMgr.GetDomainCount(),
+		"motherland_domains_count": u.domainMgr.GetDomainCount(),
 	}
 }

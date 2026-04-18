@@ -9,10 +9,10 @@ import (
 
 // Config 总配置结构
 type Config struct {
-	Server       ServerConfig       `yaml:"server"`
-	Upstream     UpstreamConfig     `yaml:"upstream"`
-	ChinaDomains ChinaDomainsConfig `yaml:"china_domains"`
-	PoisonCheck  PoisonCheckConfig  `yaml:"poison_check"`
+	Server            ServerConfig            `yaml:"server"`
+	Upstream          UpstreamConfig          `yaml:"upstream"`
+	MotherlandDomains MotherlandDomainsConfig `yaml:"motherland_domains"`
+	PoisonCheck       PoisonCheckConfig       `yaml:"poison_check"`
 }
 
 // ServerConfig DNS服务器配置
@@ -27,8 +27,8 @@ type UpstreamConfig struct {
 	Overseas []string `yaml:"overseas"`
 }
 
-// ChinaDomainsConfig 中国域名配置
-type ChinaDomainsConfig struct {
+// MotherlandDomainsConfig 母国域名配置
+type MotherlandDomainsConfig struct {
 	SourceURL      string   `yaml:"source_url"`
 	FilePath       string   `yaml:"file_path"`
 	UpdateInterval int      `yaml:"update_interval"`
@@ -37,12 +37,12 @@ type ChinaDomainsConfig struct {
 
 // PoisonCheckConfig 判毒系统配置
 type PoisonCheckConfig struct {
-	Enabled             bool `yaml:"enabled"`
-	TLSTimeout          int  `yaml:"tls_timeout"`
-	ConcurrentChecks    int  `yaml:"concurrent_checks"`
-	TLSPort             int  `yaml:"tls_port"`
-	StrictMode          bool `yaml:"strict_mode"`
-	CacheUpdateInterval int  `yaml:"cache_update_interval"`
+	Enabled              bool `yaml:"enabled"`
+	TLSTimeout           int  `yaml:"tls_timeout"`
+	ConcurrentChecks     int  `yaml:"concurrent_checks"`
+	TLSPort              int  `yaml:"tls_port"`
+	StrictMode           bool `yaml:"strict_mode"`
+	CacheRefreshInterval int  `yaml:"cache_refresh_interval"`
 }
 
 // Load 加载配置文件
@@ -73,8 +73,8 @@ func Load(path string) (*Config, error) {
 	if cfg.PoisonCheck.TLSPort == 0 {
 		cfg.PoisonCheck.TLSPort = 443
 	}
-	if cfg.PoisonCheck.CacheUpdateInterval == 0 {
-		cfg.PoisonCheck.CacheUpdateInterval = 1 // 默认1小时
+	if cfg.PoisonCheck.CacheRefreshInterval == 0 {
+		cfg.PoisonCheck.CacheRefreshInterval = 30
 	}
 
 	return &cfg, nil

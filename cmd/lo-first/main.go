@@ -48,13 +48,13 @@ func main() {
 	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
 
 	// 创建域名管理器
-	domainMgr := domain.NewManager(cfg.ChinaDomains)
+	domainMgr := domain.NewManager(cfg.MotherlandDomains)
 	if err := domainMgr.Load(); err != nil {
-		log.Printf("加载中国域名列表失败: %v", err)
+		log.Printf("加载母国域名列表失败: %v", err)
 	}
 
 	// 创建判毒检查器
-	poisonChecker := poison.NewChecker(cfg.PoisonCheck)
+	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr)
 
 	// 创建DNS服务器
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)

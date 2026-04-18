@@ -14,13 +14,13 @@ import (
 
 // Manager 域名管理器
 type Manager struct {
-	domains map[string]struct{} // 中国域名集合
+	domains map[string]struct{} // 母国域名集合
 	mu      sync.RWMutex
-	config  config.ChinaDomainsConfig
+	config  config.MotherlandDomainsConfig
 }
 
 // NewManager 创建域名管理器
-func NewManager(cfg config.ChinaDomainsConfig) *Manager {
+func NewManager(cfg config.MotherlandDomainsConfig) *Manager {
 	return &Manager{
 		domains: make(map[string]struct{}),
 		config:  cfg,
@@ -140,10 +140,10 @@ func (m *Manager) Update() error {
 	return m.Load()
 }
 
-// IsChinaDomain 检查是否为中国域名
-func (m *Manager) IsChinaDomain(domain string) bool {
+// IsMotherlandDomain 检查是否为母国域名
+func (m *Manager) IsMotherlandDomain(domain string) bool {
 	domain = normalizeDomain(domain)
-	
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
