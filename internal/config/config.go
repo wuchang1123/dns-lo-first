@@ -18,8 +18,9 @@ type Config struct {
 
 // ServerConfig DNS服务器配置
 type ServerConfig struct {
-	Listen    string `yaml:"listen"`
-	CacheSize int    `yaml:"cache_size"`
+	Listen      string `yaml:"listen"`
+	CacheSize   int    `yaml:"cache_size"`
+	LogTimezone string `yaml:"log_timezone"`
 }
 
 // UpstreamConfig 上游服务器配置
@@ -73,6 +74,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Server.CacheSize == 0 {
 		cfg.Server.CacheSize = 10000
+	}
+	if cfg.Server.LogTimezone == "" {
+		cfg.Server.LogTimezone = "Asia/Shanghai"
 	}
 	if cfg.PoisonCheck.TLSTimeout == 0 {
 		cfg.PoisonCheck.TLSTimeout = 5

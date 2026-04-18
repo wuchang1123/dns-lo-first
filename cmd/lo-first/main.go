@@ -68,7 +68,7 @@ func main() {
 	var logMutex sync.Mutex
 
 	rotateLogFile := func() error {
-		loc, err := time.LoadLocation("Asia/Shanghai")
+		loc, err := time.LoadLocation(cfg.Server.LogTimezone)
 		if err != nil {
 			loc = time.UTC
 		}

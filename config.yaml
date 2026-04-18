@@ -7,6 +7,8 @@ server:
   listen: ":5355"
   # 缓存大小
   cache_size: 10000
+  # 日志时区
+  log_timezone: "Asia/Shanghai"
 
 # 上游DNS服务器
 upstream:
