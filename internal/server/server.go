@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"lo-dns/internal/cache"
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
 	"lo-dns/internal/iprange"
@@ -30,6 +31,7 @@ type Server struct {
 	ipRange        *iprange.Manager
 	pendingQueries map[string]*pendingQuery
 	pendingMu      sync.Mutex
+	dnsCache       *cache.DNSCache
 }
 
 // pendingQuery 待处理查询
@@ -42,6 +44,14 @@ type pendingQuery struct {
 
 // NewServer 创建DNS服务器
 func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *domain.Manager, ipRangeMgr *iprange.Manager, poisonChecker *poison.Checker) *Server {
+	var dnsCache *cache.DNSCache
+	if cfg.Server.CacheSize > 0 {
+		dnsCache = cache.NewDNSCache(cfg.Server.CacheSize, 5*time.Minute)
+		log.Printf("[CACHE] DNS缓存已启用，大小: %d", cfg.Server.CacheSize)
+	} else {
+		log.Println("[CACHE] DNS缓存已禁用")
+	}
+
 	return &Server{
 		config:         cfg,
 		upstreamMgr:    upstreamMgr,
@@ -49,6 +59,7 @@ func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *dom
 		poisonChecker:  poisonChecker,
 		ipRange:        ipRangeMgr,
 		pendingQueries: make(map[string]*pendingQuery),
+		dnsCache:       dnsCache,
 	}
 }
 
@@ -73,7 +84,6 @@ func (s *Server) Start() error {
 
 // ServeDNS 处理DNS请求
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
-	// 只处理A记录查询
 	if len(r.Question) == 0 || r.Question[0].Qtype != dns.TypeA {
 		dns.HandleFailed(w, r)
 		return
@@ -81,7 +91,16 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
-	// 处理查询合并
+	if cached, ok := s.dnsCache.Get(domain); ok {
+		resp := cached.Copy()
+		resp.Id = r.Id
+		if err := w.WriteMsg(resp); err != nil {
+			log.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
+		}
+		log.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
+		return
+	}
+
 	s.pendingMu.Lock()
 	if pending, exists := s.pendingQueries[domain]; exists {
 		// 已有相同查询正在处理，加入等待队列
@@ -131,6 +150,10 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			resp.Id = r.Id
 			waiter.WriteMsg(resp)
 		}
+	}
+
+	if pending.err == nil && pending.result != nil {
+		s.dnsCache.Set(domain, pending.result)
 	}
 
 	log.Printf("[QUERY OK] %s -> 响应 %d 个等待者", domain, len(waiters))
