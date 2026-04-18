@@ -492,11 +492,15 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 					if !checkResult.Passed {
-						// 验证失败，返回空响应，TTL为0
-						log.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，返回空响应", domain)
+						// 验证失败，直接返回，TTL为0
+						log.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，但是ttl设置为0", domain)
 						emptyResp := new(dns.Msg)
 						emptyResp.SetReply(r)
 						emptyResp.Rcode = dns.RcodeSuccess
+						// 确保TTL为0
+						for _, answer := range emptyResp.Answer {
+							answer.Header().Ttl = 0
+						}
 						return emptyResp, nil
 					}
 				}
