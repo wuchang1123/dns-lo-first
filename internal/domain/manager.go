@@ -5,29 +5,32 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"lo-dns/internal/config"
 )
 
-// Manager 域名管理器
 type Manager struct {
-	domains map[string]struct{} // 所在国域名集合
+	config  Config
+	domains map[string]struct{}
 	mu      sync.RWMutex
-	config  config.LocalDomainsConfig
 }
 
-// NewManager 创建域名管理器
-func NewManager(cfg config.LocalDomainsConfig) *Manager {
+type Config struct {
+	SourceURL      string   `yaml:"source_url"`
+	FilePath       string   `yaml:"file_path"`
+	UpdateInterval int      `yaml:"update_interval"`
+	Custom         []string `yaml:"custom"`
+}
+
+func NewManager(cfg Config) *Manager {
 	return &Manager{
-		domains: make(map[string]struct{}),
 		config:  cfg,
+		domains: make(map[string]struct{}),
 	}
 }
 
-// Load 加载域名列表
 func (m *Manager) Load() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,7 +54,6 @@ func (m *Manager) Load() error {
 	return nil
 }
 
-// loadFromFile 从文件加载域名
 func (m *Manager) loadFromFile(filepath string) error {
 	f, err := os.Open(filepath)
 	if err != nil {
@@ -66,11 +68,14 @@ func (m *Manager) loadFromFile(filepath string) error {
 			continue
 		}
 
-		// 处理 dnsmasq 格式: server=/domain.com/114.114.114.114
+		// 处理 dnsmasq 格式: server=/domain1/domain2/domain3/.../ip
+		// 新格式支持在一行中包含多个域名
 		if strings.HasPrefix(line, "server=/") {
 			parts := strings.Split(line, "/")
-			if len(parts) >= 2 {
-				domain := normalizeDomain(parts[1])
+			// parts[0] = "server", parts[1..n-1] = domains, parts[n] = IP
+			// 遍历所有域名段（最后一段是IP，跳过）
+			for i := 1; i < len(parts)-1; i++ {
+				domain := normalizeDomain(parts[i])
 				if domain != "" {
 					m.domains[domain] = struct{}{}
 				}
@@ -171,14 +176,10 @@ func normalizeDomain(domain string) string {
 	return domain
 }
 
-// getDir 获取目录路径
+// getDir 获取文件所在目录
 func getDir(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[:i]
-		}
-	}
-	return "."
+	dir, _ := filepath.Split(path)
+	return dir
 }
 
 // GetDomainCount 获取域名数量

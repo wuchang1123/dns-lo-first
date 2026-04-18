@@ -48,7 +48,12 @@ func main() {
 	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
 
 	// 创建域名管理器
-	domainMgr := domain.NewManager(cfg.LocalDomains)
+	domainMgr := domain.NewManager(domain.Config{
+		SourceURL:      cfg.LocalDomains.SourceURL,
+		FilePath:       cfg.LocalDomains.FilePath,
+		UpdateInterval: cfg.LocalDomains.UpdateInterval,
+		Custom:         cfg.LocalDomains.Custom,
+	})
 	if err := domainMgr.Load(); err != nil {
 		log.Printf("加载所在国域名列表失败: %v", err)
 	}

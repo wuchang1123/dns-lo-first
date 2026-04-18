@@ -115,7 +115,7 @@ upstream:
     - "1.1.1.1:53"
 
 china_domains:
-  source_url: "https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
+  source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
   file_path: "./data/china_domains.txt"
   update_interval: 24    # 更新间隔（小时）
 

@@ -23,7 +23,7 @@ upstream:
 # 所在国域名列表配置
 local_domains:
   # 数据源URL
-  source_url: "https://raw.githubusercontent.com/felixonmars/dnsmasq-china-list/master/accelerated-domains.china.conf"
+  source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
   # 本地文件路径
   file_path: "./data/china_domains.txt"
   # 更新间隔（小时）
@@ -52,4 +52,4 @@ poison_check:
   # 缓存刷新间隔（分钟），0表示禁用
   cache_refresh_interval: 60
   # 缓存过期时间（分钟）
-  cache_ttl: 30
+  cache_ttl: 60 * 12 # 12小时
