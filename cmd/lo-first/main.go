@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
@@ -60,8 +61,9 @@ func main() {
 		log.Fatalf("创建日志目录失败: %v", err)
 	}
 
-	// 设置日志输出到文件
-	logFile := filepath.Join(logDir, "lo-first.log")
+	// 设置日志输出到文件（按日期每天一个文件）
+	dateStr := time.Now().Format("2006-01-02")
+	logFile := filepath.Join(logDir, fmt.Sprintf("lo-first-%s.log", dateStr))
 	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatalf("打开日志文件失败: %v", err)
