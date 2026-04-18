@@ -117,6 +117,7 @@ func main() {
 				file:     f,
 				timezone: tzLoc,
 			}
+			log.SetFlags(0)
 			log.SetOutput(logWriter)
 		}
 		currentDateStr = dateStr
