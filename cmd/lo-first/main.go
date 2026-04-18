@@ -50,6 +50,9 @@ func main() {
 
 	// 创建域名管理器
 	domainMgr := domain.NewManager(cfg.ChinaDomains)
+	if err := domainMgr.Load(); err != nil {
+		log.Printf("加载中国域名列表失败: %v", err)
+	}
 
 	// 创建IP段管理器
 	ipRangeMgr := iprange.NewManager(cfg.OverseasIPRanges)
