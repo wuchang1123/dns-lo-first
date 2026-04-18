@@ -5,12 +5,16 @@ on:
     branches: [main]
     paths-ignore:
       - '**.md'
+      - 'bin/**'
       - 'data/**'
+      - 'scripts/**'
   pull_request:
     branches: [main]
     paths-ignore:
       - '**.md'
+      - 'bin/**'
       - 'data/**'
+      - 'scripts/**'
 
 jobs:
   build:
