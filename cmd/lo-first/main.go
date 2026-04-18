@@ -70,11 +70,16 @@ func main() {
 	rotateLogFile := func() error {
 		loc, err := time.LoadLocation(cfg.Server.LogTimezone)
 		if err != nil {
-			loc = time.UTC
-			log.Printf("[WARN] 无法加载时区 %s，使用UTC", cfg.Server.LogTimezone)
+			log.Printf("[WARN] 无法加载时区 %s: %v，尝试使用 Local 时区", cfg.Server.LogTimezone, err)
+			loc = time.Local
+			if loc == nil {
+				loc = time.UTC
+				log.Printf("[WARN] Local 时区不可用，使用 UTC")
+			}
 		}
-		dateStr := time.Now().In(loc).Format("2006-01-02")
-		log.Printf("[DEBUG] 当前日期（%s）: %s", cfg.Server.LogTimezone, dateStr)
+		now := time.Now().In(loc)
+		dateStr := now.Format("2006-01-02")
+		log.Printf("[DEBUG] 当前日期（%s）: %s, 当前时间: %s", cfg.Server.LogTimezone, dateStr, now.Format("15:04:05"))
 		if dateStr == currentDateStr && logFile != nil {
 			return nil
 		}
