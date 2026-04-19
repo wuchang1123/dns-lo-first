@@ -4,6 +4,8 @@
 
 基于Go开发的高性能本地DNS服务器，支持智能分流、判毒检测和定时更新。
 
+**❗ 重要提示：所有海外上游服务器是否可用都依赖你的梯子**，本项目不关注
+
 ## 特性
 
 - **本地优先**: 无污染本地优先原则
@@ -102,9 +104,13 @@ sudo make uninstall
 编辑 `config.yaml`：
 
 ```yaml
+# 基础目录，默认当前目录
+base_dir: "."
+
 server:
   listen: ":53"          # DNS监听地址
   cache_size: 10000      # 缓存大小
+  log_timezone: "Asia/Shanghai"  # 日志时区
 
 upstream:
   local:                 # 本地DNS服务器
@@ -121,6 +127,10 @@ local_domains:
   custom:                # 自定义域名列表
     - "baidu.com"
     - "taobao.com"
+  overpass:              # 跳过本地DNS查询的域名（直接使用海外DNS）
+    - "googlevideo.com"
+    - "ytimg.com"
+    - "github.com"
 
 poison_check:
   enabled: true
@@ -131,6 +141,14 @@ poison_check:
   cache_refresh_interval: 60  # 缓存刷新间隔（分钟），0表示禁用
   cache_ttl: 30          # 缓存过期时间（分钟）
 ```
+
+### 配置说明
+
+| 配置项 | 说明 |
+|--------|------|
+| `base_dir` | 基础目录，cache、data、log目录将在其下创建 |
+| `server.log_timezone` | 日志时区，如 `Asia/Shanghai`、`America/New_York` |
+| `local_domains.overpass` | 域名列表，这些域名直接使用海外DNS，跳过本地DNS查询和判毒检查 |
 
 ## 使用
 
