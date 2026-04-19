@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lo-dns/internal/config"
+	"lo-dns/internal/logger"
 	"lo-dns/internal/upstream"
 
 	"github.com/miekg/dns"
@@ -105,7 +106,7 @@ func (c *Checker) checkAndSyncCacheFile() {
 			c.cacheMu.Lock()
 			c.cache = make(cacheData)
 			c.cacheMu.Unlock()
-			fmt.Println("[CACHE SYNC] 缓存文件不存在，已清空内存缓存")
+			logger.Printf("[CACHE SYNC] 缓存文件不存在，已清空内存缓存")
 		}
 		return
 	}
@@ -116,7 +117,7 @@ func (c *Checker) checkAndSyncCacheFile() {
 		c.cacheMu.Lock()
 		c.cache = make(cacheData)
 		c.cacheMu.Unlock()
-		fmt.Println("[CACHE SYNC] 缓存文件为空，已清空内存缓存")
+		logger.Printf("[CACHE SYNC] 缓存文件为空，已清空内存缓存")
 		return
 	}
 
@@ -134,7 +135,7 @@ func (c *Checker) checkAndSyncCacheFile() {
 		c.cacheMu.Lock()
 		c.cache = make(cacheData)
 		c.cacheMu.Unlock()
-		fmt.Printf("[CACHE SYNC] 缓存文件JSON格式无效，已清空内存缓存: %v\n", err)
+		logger.Printf("[CACHE SYNC] 缓存文件JSON格式无效，已清空内存缓存: %v", err)
 		return
 	}
 }
@@ -246,14 +247,14 @@ func (c *Checker) saveCache() {
 	tmpFile := c.cacheFile + ".tmp"
 	err := os.WriteFile(tmpFile, data, 0644)
 	if err != nil {
-		fmt.Printf("写入临时缓存文件失败: %v\n", err)
+		logger.Printf("写入临时缓存文件失败: %v", err)
 		return
 	}
 
 	// 原子性重命名，避免文件损坏
 	err = os.Rename(tmpFile, c.cacheFile)
 	if err != nil {
-		fmt.Printf("重命名缓存文件失败: %v\n", err)
+		logger.Printf("重命名缓存文件失败: %v", err)
 		// 清理临时文件
 		os.Remove(tmpFile)
 	}
@@ -265,7 +266,7 @@ func (c *Checker) loadCache() {
 	data, err := os.ReadFile(c.cacheFile)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Printf("读取缓存文件失败: %v\n", err)
+			logger.Printf("读取缓存文件失败: %v", err)
 		}
 		return
 	}
@@ -274,7 +275,7 @@ func (c *Checker) loadCache() {
 	var loadedCache cacheData
 	err = json.Unmarshal(data, &loadedCache)
 	if err != nil {
-		fmt.Printf("解析缓存文件失败: %v\n", err)
+		logger.Printf("解析缓存文件失败: %v", err)
 		return
 	}
 
@@ -295,7 +296,7 @@ func (c *Checker) loadCache() {
 	for _, ipMap := range c.cache {
 		count += len(ipMap)
 	}
-	fmt.Printf("加载了 %d 个缓存项\n", count)
+	logger.Printf("加载了 %d 个缓存项", count)
 }
 
 // Check 对域名和IP列表进行判毒检查
