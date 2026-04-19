@@ -63,7 +63,8 @@ func main() {
 	}
 
 	// 初始化日志记录器
-	logger.Init(cfg.Server.LogTimezone)
+	logLevel := config.GetLogLevel(cfg.Server.LogLevel)
+	logger.Init(cfg.Server.LogTimezone, logLevel)
 	tz, _ := time.LoadLocation(cfg.Server.LogTimezone)
 
 	// 设置日志输出到文件（按日期每天一个文件）
