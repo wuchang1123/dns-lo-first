@@ -111,6 +111,7 @@ server:
   listen: ":53"          # DNS监听地址
   cache_size: 10000      # 缓存大小
   log_timezone: "Asia/Shanghai"  # 日志时区
+  log_level: "info"       # 日志等级: debug, info, warn, error, fatal
 
 upstream:
   local:                 # 本地DNS服务器
@@ -148,6 +149,7 @@ poison_check:
 |--------|------|
 | `base_dir` | 基础目录，cache、data、log目录将在其下创建 |
 | `server.log_timezone` | 日志时区，如 `Asia/Shanghai`、`America/New_York` |
+| `server.log_level` | 日志等级，可选值：debug, info, warn, error, fatal |
 | `local_domains.overpass` | 域名列表，这些域名直接使用海外DNS，跳过本地DNS查询和判毒检查 |
 
 ## 使用
