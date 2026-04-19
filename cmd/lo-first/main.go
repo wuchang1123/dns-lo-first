@@ -88,11 +88,22 @@ func main() {
 		if err != nil {
 			log.Printf("[WARN] 无法加载时区 %s: %v，尝试使用 Local 时区", cfg.Server.LogTimezone, err)
 			loc = time.Local
-			if loc == nil {
+			if loc == nil || loc.String() == "UTC" {
+				log.Printf("[WARN] Local 时区为 UTC 或不可用，尝试常见时区")
+				for _, tz := range []string{"Asia/Shanghai", "Asia/Tokyo", "America/New_York", "Europe/London"} {
+					if tz == cfg.Server.LogTimezone {
+						continue
+					}
+					if loc, err := time.LoadLocation(tz); err == nil && loc.String() != "UTC" {
+						log.Printf("[INFO] 使用备用时区: %s (%s)", tz, loc)
+						goto locFound
+					}
+				}
 				loc = time.UTC
-				log.Printf("[WARN] Local 时区不可用，使用 UTC")
+				log.Printf("[WARN] 使用 UTC 时区")
 			}
 		}
+	locFound:
 		tzLoc = loc
 		now := time.Now().In(loc)
 		dateStr := now.Format("2006-01-02")
