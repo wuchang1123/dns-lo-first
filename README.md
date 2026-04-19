@@ -138,7 +138,6 @@ poison_check:
   tls_timeout: 5         # TLS连接超时（秒）
   concurrent_checks: 10  # 并发校验数量
   tls_port: 443          # 校验端口
-  strict_mode: true      # IP段匹配严格模式
   cache_refresh_interval: 60  # 缓存刷新间隔（分钟），0表示禁用
   cache_ttl: 30          # 缓存过期时间（分钟）
 ```

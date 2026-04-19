@@ -46,7 +46,6 @@ type PoisonCheckConfig struct {
 	TLSTimeout           int  `yaml:"tls_timeout"`
 	ConcurrentChecks     int  `yaml:"concurrent_checks"`
 	TLSPort              int  `yaml:"tls_port"`
-	StrictMode           bool `yaml:"strict_mode"`
 	CacheRefreshInterval int  `yaml:"cache_refresh_interval"`
 	CacheTTL             int  `yaml:"cache_ttl"` // 缓存过期时间（分钟）
 }

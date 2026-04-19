@@ -58,8 +58,6 @@ poison_check:
   concurrent_checks: 10
   # 校验端口
   tls_port: 443
-  # IP段匹配严格模式
-  strict_mode: true
   # 缓存刷新间隔（分钟），0表示禁用
   cache_refresh_interval: 30
   # 缓存过期时间（分钟）
