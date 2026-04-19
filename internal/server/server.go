@@ -177,13 +177,85 @@ func (s *Server) queryLocalOnly(r *dns.Msg) (*dns.Msg, error) {
 
 // queryOverseasOnly 只使用海外DNS查询（并进行TLS校验）
 func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
+	// 提取域名
+	domain := strings.TrimSuffix(r.Question[0].Name, ".")
+
+	// 乐观缓存策略：先检查TLS验证缓存是否有通过的IP
+	passedIPs, hasValidCache := s.getPassedIPsFromCache(domain)
+	if hasValidCache {
+		// 构建响应消息
+		resp := new(dns.Msg)
+		resp.SetReply(r)
+		resp.Rcode = dns.RcodeSuccess
+
+		// 添加最多6个通过的IP
+		for i, ip := range passedIPs {
+			if i >= 6 {
+				break
+			}
+			resp.Answer = append(resp.Answer, &dns.A{
+				Hdr: dns.RR_Header{
+					Name:   r.Question[0].Name,
+					Rrtype: dns.TypeA,
+					Class:  dns.ClassINET,
+					Ttl:    60,
+				},
+				A: ip,
+			})
+		}
+
+		// 后台运行完整的查询和验证流程，更新缓存
+		go func() {
+			result := s.upstreamMgr.QueryOverseas(context.Background(), r)
+			if result.Err != nil {
+				logger.Printf("[OVERPASS BACKGROUND] %s -> 查询失败: %v", domain, result.Err)
+				return
+			}
+
+			// 提取IP并进行TLS验证
+			ips := extractIPs(result.Response)
+			if len(ips) > 0 {
+				// 随机选择一个IP进行检查
+				selectedIPs := randomSelectIPs(ips)
+				if len(selectedIPs) > 0 {
+					// 进行TLS验证
+					checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
+					logger.Printf("[OVERPASS BACKGROUND] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
+						domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
+
+					// 在后台对剩余IP进行TLS验证并缓存结果
+					if len(ips) > 1 {
+						remainingIPs := make([]net.IP, 0, len(ips)-1)
+						for _, ip := range ips {
+							found := false
+							for _, selectedIP := range selectedIPs {
+								if ip.Equal(selectedIP) {
+									found = true
+									break
+								}
+							}
+							if !found {
+								remainingIPs = append(remainingIPs, ip)
+							}
+						}
+						if len(remainingIPs) > 0 {
+							s.poisonChecker.Check(domain, remainingIPs, "overseas")
+							logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+						}
+					}
+				}
+			}
+		}()
+
+		logger.Printf("[OVERPASS CACHE] %s -> 从缓存返回 %d 个通过的IP", domain, len(resp.Answer))
+		return resp, nil
+	}
+
+	// 缓存未命中，执行正常查询流程
 	result := s.upstreamMgr.QueryOverseas(context.Background(), r)
 	if result.Err != nil {
 		return nil, result.Err
 	}
-
-	// 提取域名
-	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
 	// 提取IP并进行TLS验证
 	ips := extractIPs(result.Response)
