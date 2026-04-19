@@ -135,11 +135,11 @@ func main() {
 
 	// 如果仅更新数据
 	if *updateOnly {
-		logger.Println("仅更新数据模式")
+		logger.Infof("仅更新数据模式")
 		if err := updater.UpdateAll(); err != nil {
 			logger.Fatalf("更新数据失败: %v", err)
 		}
-		logger.Println("数据更新完成")
+		logger.Infof("数据更新完成")
 		return
 	}
 
@@ -156,14 +156,14 @@ func main() {
 		logger.Fatalf("启动DNS服务器失败: %v", err)
 	}
 
-	logger.Printf("[%s] 服务器已启动，监听 %s", AppName, cfg.Server.Listen)
-	logger.Println("按 Ctrl+C 停止服务器")
+	logger.Infof("[%s] 服务器已启动，监听 %s", AppName, cfg.Server.Listen)
+	logger.Infof("按 Ctrl+C 停止服务器")
 
 	// 等待信号
 	<-sigChan
-	logger.Println("正在关闭...")
+	logger.Infof("正在关闭...")
 
 	updater.Stop()
 
-	logger.Printf("[%s] 已关闭", AppName)
+	logger.Infof("[%s] 已关闭", AppName)
 }

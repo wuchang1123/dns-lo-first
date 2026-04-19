@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"lo-dns/internal/logger"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -21,6 +22,7 @@ type ServerConfig struct {
 	Listen      string `yaml:"listen"`
 	CacheSize   int    `yaml:"cache_size"`
 	LogTimezone string `yaml:"log_timezone"`
+	LogLevel    string `yaml:"log_level"`
 }
 
 // UpstreamConfig 上游服务器配置
@@ -47,6 +49,24 @@ type PoisonCheckConfig struct {
 	StrictMode           bool `yaml:"strict_mode"`
 	CacheRefreshInterval int  `yaml:"cache_refresh_interval"`
 	CacheTTL             int  `yaml:"cache_ttl"` // 缓存过期时间（分钟）
+}
+
+// GetLogLevel 将字符串日志等级转换为logger包中的等级常量
+func GetLogLevel(level string) int {
+	switch level {
+	case "debug":
+		return logger.Debug
+	case "info":
+		return logger.Info
+	case "warn":
+		return logger.Warn
+	case "error":
+		return logger.Error
+	case "fatal":
+		return logger.Fatal
+	default:
+		return logger.Info
+	}
 }
 
 // Load 加载配置文件
@@ -77,6 +97,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Server.LogTimezone == "" {
 		cfg.Server.LogTimezone = "Asia/Shanghai"
+	}
+	if cfg.Server.LogLevel == "" {
+		cfg.Server.LogLevel = "info"
 	}
 	if cfg.PoisonCheck.TLSTimeout == 0 {
 		cfg.PoisonCheck.TLSTimeout = 5

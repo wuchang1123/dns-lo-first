@@ -9,6 +9,8 @@ server:
   cache_size: 10000
   # 日志时区
   log_timezone: "Asia/Shanghai"
+  # 日志等级: debug, info, warn, error, fatal
+  log_level: "info"
 
 # 上游DNS服务器
 upstream:
