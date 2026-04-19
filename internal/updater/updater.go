@@ -3,12 +3,12 @@ package updater
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
+	"lo-dns/internal/logger"
 )
 
 // Updater 定时更新器
@@ -83,16 +83,16 @@ func (u *Updater) updateLocalDomains() error {
 		return nil
 	}
 
-	log.Println("[UPDATER] 开始更新所在国域名列表...")
+	logger.Println("[UPDATER] 开始更新所在国域名列表...")
 	start := time.Now()
 
 	if err := u.domainMgr.Update(); err != nil {
-		log.Printf("[UPDATER] 更新所在国域名列表失败: %v", err)
+		logger.Printf("[UPDATER] 更新所在国域名列表失败: %v", err)
 		return err
 	}
 
 	count := u.domainMgr.GetDomainCount()
-	log.Printf("[UPDATER] 所在国域名列表更新完成，共 %d 个域名，耗时 %v", count, time.Since(start))
+	logger.Printf("[UPDATER] 所在国域名列表更新完成，共 %d 个域名，耗时 %v", count, time.Since(start))
 	return nil
 }
 

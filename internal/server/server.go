@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"net"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"lo-dns/internal/cache"
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
+	"lo-dns/internal/logger"
 	"lo-dns/internal/poison"
 	"lo-dns/internal/upstream"
 
@@ -45,9 +45,9 @@ func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *dom
 	var dnsCache *cache.DNSCache
 	if cfg.Server.CacheSize > 0 {
 		dnsCache = cache.NewDNSCache(cfg.Server.CacheSize, 5*time.Minute)
-		log.Printf("[CACHE] DNS缓存已启用，大小: %d", cfg.Server.CacheSize)
+		logger.Printf("[CACHE] DNS缓存已启用，大小: %d", cfg.Server.CacheSize)
 	} else {
-		log.Println("[CACHE] DNS缓存已禁用")
+		logger.Println("[CACHE] DNS缓存已禁用")
 	}
 
 	return &Server{
@@ -70,9 +70,9 @@ func (s *Server) Start() error {
 	}
 
 	go func() {
-		log.Println("[LO-DNS] 服务器已启动，监听", addr)
+		logger.Println("[LO-DNS] 服务器已启动，监听", addr)
 		if err := udpServer.ListenAndServe(); err != nil {
-			log.Printf("DNS服务器错误: %v", err)
+			logger.Printf("DNS服务器错误: %v", err)
 		}
 	}()
 
@@ -94,9 +94,9 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		resp := cached.Copy()
 		resp.Id = r.Id
 		if err := w.WriteMsg(resp); err != nil {
-			log.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
+			logger.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
 		}
-		log.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
+		logger.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
 		return
 	}
 
@@ -105,7 +105,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		// 已有相同查询正在处理，加入等待队列
 		pending.waiters = append(pending.waiters, w)
 		s.pendingMu.Unlock()
-		log.Printf("[MERGE] %s 加入等待队列", domain)
+		logger.Printf("[MERGE] %s 加入等待队列", domain)
 		return
 	}
 
@@ -123,14 +123,14 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// 检查是否为overpass域名（直接跳过本地DNS查询）
 	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
 	if isOverpassDomain {
-		log.Printf("[OVERPASS DOMAIN] %s -> 直接使用海外DNS", domain)
+		logger.Printf("[OVERPASS DOMAIN] %s -> 直接使用海外DNS", domain)
 		response, err = s.queryOverseasOnly(r)
 	} else {
 		// 检查是否为本地域名
 		isLocalDomain := s.domainMgr.IsLocalDomain(domain)
 
 		if isLocalDomain {
-			log.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
+			logger.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
 			response, err = s.queryLocalOnly(r)
 		} else {
 			response, err = s.queryWithPoisonCheck(r, domain)
@@ -163,7 +163,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		s.dnsCache.Set(domain, pending.result)
 	}
 
-	log.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), time.Since(start))
+	logger.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), time.Since(start))
 }
 
 // queryLocalOnly 只查询本地DNS
@@ -193,7 +193,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 		if len(selectedIPs) > 0 {
 			// 进行TLS验证
 			checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
-			log.Printf("[OVERPASS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
+			logger.Printf("[OVERPASS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 				domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 			// 在后台对剩余IP进行TLS验证并缓存结果
@@ -214,7 +214,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 					}
 					if len(remainingIPs) > 0 {
 						s.poisonChecker.Check(domain, remainingIPs, "overseas")
-						log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+						logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 					}
 				}()
 			}
@@ -233,13 +233,13 @@ func (s *Server) getPassedIPsFromCache(domain string) ([]net.IP, bool) {
 	info, err := os.Stat(cacheFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			log.Printf("[CACHE CHECK] %s -> 缓存文件不存在", domain)
+			logger.Printf("[CACHE CHECK] %s -> 缓存文件不存在", domain)
 		}
 		return nil, false
 	}
 
 	if info.Size() == 0 {
-		log.Printf("[CACHE CHECK] %s -> 缓存文件为空", domain)
+		logger.Printf("[CACHE CHECK] %s -> 缓存文件为空", domain)
 		return nil, false
 	}
 
@@ -259,7 +259,7 @@ func (s *Server) getPassedIPsFromCache(domain string) ([]net.IP, bool) {
 	var cache cacheData
 	err = json.Unmarshal(data, &cache)
 	if err != nil {
-		log.Printf("[CACHE CHECK] %s -> 缓存文件JSON格式无效: %v", domain, err)
+		logger.Printf("[CACHE CHECK] %s -> 缓存文件JSON格式无效: %v", domain, err)
 		return nil, false
 	}
 
@@ -321,7 +321,7 @@ func (s *Server) getPassedIPsFromCache(domain string) ([]net.IP, bool) {
 			case <-time.After(5 * time.Second):
 			}
 
-			log.Printf("[CACHE REFRESH] %s -> 后台更新 %d 个过期缓存项", domain, len(expiredIPs))
+			logger.Printf("[CACHE REFRESH] %s -> 后台更新 %d 个过期缓存项", domain, len(expiredIPs))
 		}()
 	}
 
@@ -355,7 +355,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 		}
 
 		// 记录日志
-		log.Printf("[CACHE PASS] %s -> 从缓存返回 %d 个通过的IP", domain, len(passedIPs))
+		logger.Printf("[CACHE PASS] %s -> 从缓存返回 %d 个通过的IP", domain, len(passedIPs))
 
 		// 在后台继续执行后续程序（查询本地和海外DNS）
 		go func() {
@@ -387,7 +387,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 
 					// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
 					checkResult := s.poisonChecker.Check(domain, ips, "local")
-					log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
+					logger.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
 						domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 					// 在后台对剩余IP进行TLS验证并缓存结果
@@ -408,13 +408,13 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 							}
 							if len(remainingIPs) > 0 {
 								s.poisonChecker.Check(domain, remainingIPs, "local")
-								log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+								logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 							}
 						}()
 					}
 				}
 			case <-time.After(3 * time.Second):
-				log.Printf("[TIMEOUT] %s -> 本地DNS超时", domain)
+				logger.Printf("[TIMEOUT] %s -> 本地DNS超时", domain)
 			}
 
 			// 等待海外结果（如果需要）
@@ -429,7 +429,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						if len(selectedIPs) > 0 {
 							// 进行TLS验证（使用原始域名，因为CDN证书通常对原始域名有效）
 							checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
-							log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
+							logger.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 								domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 						}
 
@@ -451,14 +451,14 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 								}
 								if len(remainingIPs) > 0 {
 									s.poisonChecker.Check(domain, remainingIPs, "overseas")
-									log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+									logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 								}
 							}()
 						}
 					}
 				}
 			case <-time.After(5 * time.Second):
-				log.Printf("[TIMEOUT] %s -> 海外DNS超时", domain)
+				logger.Printf("[TIMEOUT] %s -> 海外DNS超时", domain)
 			}
 		}()
 
@@ -493,12 +493,12 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 
 			// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
 			checkResult := s.poisonChecker.Check(domain, ips, "local")
-			log.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
+			logger.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
 				domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 			if checkResult.Passed {
 				// 判毒通过，直接返回本地结果，不等待海外
-				log.Printf("[LOCAL OK] %s -> 判毒通过，使用本地DNS", domain)
+				logger.Printf("[LOCAL OK] %s -> 判毒通过，使用本地DNS", domain)
 
 				// 在后台对剩余IP进行TLS验证并缓存结果
 				if len(allIps) > 1 {
@@ -518,7 +518,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						}
 						if len(remainingIPs) > 0 {
 							s.poisonChecker.Check(domain, remainingIPs, "local")
-							log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+							logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 						}
 					}()
 				}
@@ -528,11 +528,11 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			}
 		}
 	case <-time.After(3 * time.Second):
-		log.Printf("[TIMEOUT] %s -> 本地DNS超时", domain)
+		logger.Printf("[TIMEOUT] %s -> 本地DNS超时", domain)
 	}
 
 	// 判毒不通过或本地失败，等待海外结果
-	log.Printf("[WAIT OVERSEAS] %s -> 等待海外DNS", domain)
+	logger.Printf("[WAIT OVERSEAS] %s -> 等待海外DNS", domain)
 
 	select {
 	case overseasResult = <-overseasChan:
@@ -545,12 +545,12 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 				if len(selectedIPs) > 0 {
 					// 进行TLS验证（使用原始域名，因为CDN证书通常对原始域名有效）
 					checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
-					log.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
+					logger.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
 						domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 					if !checkResult.Passed {
 						// 验证失败，直接返回，TTL为0
-						log.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，但是ttl设置为0", domain)
+						logger.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，但是ttl设置为0", domain)
 						emptyResp := new(dns.Msg)
 						emptyResp.SetReply(r)
 						emptyResp.Rcode = dns.RcodeSuccess
@@ -580,17 +580,17 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						}
 						if len(remainingIPs) > 0 {
 							s.poisonChecker.Check(domain, remainingIPs, "overseas")
-							log.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
+							logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP", domain, len(remainingIPs))
 						}
 					}()
 				}
 			}
 
-			log.Printf("[OVERSEAS OK] %s -> 使用海外DNS", domain)
+			logger.Printf("[OVERSEAS OK] %s -> 使用海外DNS", domain)
 			return overseasResult.Response, nil
 		}
 	case <-time.After(5 * time.Second):
-		log.Printf("[TIMEOUT] %s -> 海外DNS超时", domain)
+		logger.Printf("[TIMEOUT] %s -> 海外DNS超时", domain)
 	}
 
 	return nil, fmt.Errorf("查询失败")
