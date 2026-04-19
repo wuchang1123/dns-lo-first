@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -19,26 +20,48 @@ import (
 	"lo-dns/internal/upstream"
 )
 
-// 自定义日志写入器，使用配置的时区
-type timezoneLogWriter struct {
-	mu       sync.Mutex
-	file     *os.File
-	timezone *time.Location
-}
-
-func (w *timezoneLogWriter) Write(p []byte) (n int, err error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	now := time.Now().In(w.timezone)
-	logLine := fmt.Sprintf("%s %s", now.Format("2006/01/02 15:04:05"), string(p))
-	return w.file.WriteString(logLine)
-}
-
 var (
 	configPath = flag.String("config", "config.yaml", "配置文件路径")
 	updateOnly = flag.Bool("update-only", false, "仅更新数据，不启动服务器")
 	version    = flag.Bool("version", false, "显示版本信息")
 )
+
+type TimezoneLogger struct {
+	mu       sync.Mutex
+	out      io.Writer
+	timezone *time.Location
+}
+
+func (l *TimezoneLogger) formatTime() string {
+	return time.Now().In(l.timezone).Format("2006/01/02 15:04:05")
+}
+
+func (l *TimezoneLogger) Println(v ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fmt.Fprintln(l.out, l.formatTime(), fmt.Sprint(v...))
+}
+
+func (l *TimezoneLogger) Printf(format string, v ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fmt.Fprintln(l.out, l.formatTime(), fmt.Sprintf(format, v...))
+}
+
+func (l *TimezoneLogger) Fatalf(format string, v ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	fmt.Fprintln(l.out, l.formatTime(), fmt.Sprintf(format, v...))
+	os.Exit(1)
+}
+
+func (l *TimezoneLogger) SetOutput(w io.Writer) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.out = w
+}
+
+var appLogger *TimezoneLogger
 
 const (
 	AppName    = "LO-DNS"
@@ -78,36 +101,23 @@ func main() {
 	}
 
 	// 设置日志输出到文件（按日期每天一个文件）
+	var logFile *os.File
 	var currentDateStr string
 	var logMutex sync.Mutex
-	var tzLoc *time.Location
-	var logWriter *timezoneLogWriter
+
+	// 初始化时区日志记录器
+	tz, err := time.LoadLocation(cfg.Server.LogTimezone)
+	if err != nil {
+		tz = time.UTC
+	}
+	appLogger = &TimezoneLogger{
+		out:      os.Stdout,
+		timezone: tz,
+	}
 
 	rotateLogFile := func() error {
-		loc, err := time.LoadLocation(cfg.Server.LogTimezone)
-		if err != nil {
-			log.Printf("[WARN] 无法加载时区 %s: %v，尝试使用 Local 时区", cfg.Server.LogTimezone, err)
-			loc = time.Local
-			if loc == nil || loc.String() == "UTC" {
-				log.Printf("[WARN] Local 时区为 UTC 或不可用，尝试常见时区")
-				for _, tz := range []string{"Asia/Shanghai", "Asia/Tokyo", "America/New_York", "Europe/London"} {
-					if tz == cfg.Server.LogTimezone {
-						continue
-					}
-					if loc, err := time.LoadLocation(tz); err == nil && loc.String() != "UTC" {
-						log.Printf("[INFO] 使用备用时区: %s (%s)", tz, loc)
-						goto locFound
-					}
-				}
-				loc = time.UTC
-				log.Printf("[WARN] 使用 UTC 时区")
-			}
-		}
-	locFound:
-		tzLoc = loc
-		now := time.Now().In(loc)
-		dateStr := now.Format("2006-01-02")
-		if dateStr == currentDateStr && logWriter != nil {
+		dateStr := time.Now().In(tz).Format("2006-01-02")
+		if dateStr == currentDateStr && logFile != nil {
 			return nil
 		}
 		logFilePath := filepath.Join(logDir, fmt.Sprintf("lo-first-%s.log", dateStr))
@@ -115,29 +125,18 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if logWriter != nil {
-			logWriter.mu.Lock()
-			if logWriter.file != nil {
-				logWriter.file.Close()
-			}
-			logWriter.file = f
-			logWriter.timezone = tzLoc
-			logWriter.mu.Unlock()
-		} else {
-			logWriter = &timezoneLogWriter{
-				file:     f,
-				timezone: tzLoc,
-			}
-			log.SetFlags(0)
-			log.SetOutput(logWriter)
+		if logFile != nil {
+			logFile.Close()
 		}
+		logFile = f
 		currentDateStr = dateStr
-		log.Printf("[LOG ROTATE] 日志文件轮转到: %s", dateStr)
+		appLogger.SetOutput(f)
+		appLogger.Printf("[LOG ROTATE] 日志文件轮转到: %s", dateStr)
 		return nil
 	}
 
 	if err := rotateLogFile(); err != nil {
-		log.Fatalf("打开日志文件失败: %v", err)
+		appLogger.Fatalf("打开日志文件失败: %v", err)
 	}
 
 	go func() {
@@ -150,9 +149,9 @@ func main() {
 		}
 	}()
 
-	log.Printf("[%s] 启动中...", AppName)
-	log.Printf("配置文件: %s", *configPath)
-	log.Printf("基础目录: %s", cfg.BaseDir)
+	appLogger.Printf("[%s] 启动中...", AppName)
+	appLogger.Printf("配置文件: %s", *configPath)
+	appLogger.Printf("基础目录: %s", cfg.BaseDir)
 
 	// 创建上游DNS管理器
 	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
@@ -166,7 +165,7 @@ func main() {
 		Overpass:       cfg.LocalDomains.Overpass,
 	})
 	if err := domainMgr.Load(); err != nil {
-		log.Printf("加载所在国域名列表失败: %v", err)
+		appLogger.Printf("加载所在国域名列表失败: %v", err)
 	}
 
 	// 创建判毒检查器
@@ -180,11 +179,11 @@ func main() {
 
 	// 如果仅更新数据
 	if *updateOnly {
-		log.Println("仅更新数据模式")
+		appLogger.Println("仅更新数据模式")
 		if err := updater.UpdateAll(); err != nil {
-			log.Fatalf("更新数据失败: %v", err)
+			appLogger.Fatalf("更新数据失败: %v", err)
 		}
-		log.Println("数据更新完成")
+		appLogger.Println("数据更新完成")
 		return
 	}
 
@@ -198,17 +197,17 @@ func main() {
 
 	// 启动DNS服务器
 	if err := dnsServer.Start(); err != nil {
-		log.Fatalf("启动DNS服务器失败: %v", err)
+		appLogger.Fatalf("启动DNS服务器失败: %v", err)
 	}
 
-	log.Printf("[%s] 服务器已启动，监听 %s", AppName, cfg.Server.Listen)
-	log.Println("按 Ctrl+C 停止服务器")
+	appLogger.Printf("[%s] 服务器已启动，监听 %s", AppName, cfg.Server.Listen)
+	appLogger.Println("按 Ctrl+C 停止服务器")
 
 	// 等待信号
 	<-sigChan
-	log.Println("正在关闭...")
+	appLogger.Println("正在关闭...")
 
 	updater.Stop()
 
-	log.Printf("[%s] 已关闭", AppName)
+	appLogger.Printf("[%s] 已关闭", AppName)
 }
