@@ -86,6 +86,12 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 		return &Result{Err: fmt.Errorf("no servers available"), Type: serverType}
 	}
 
+	// 提取域名用于日志
+	var domain string
+	if len(msg.Question) > 0 {
+		domain = msg.Question[0].Name
+	}
+
 	// 并发查询所有服务器，返回第一个成功的结果
 	resultChan := make(chan *Result, len(servers))
 	var wg sync.WaitGroup
@@ -102,7 +108,7 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 				}
 			} else {
 				// 记录失败的服务器和错误
-				logger.Errorf("[UPSTREAM] %s 服务器 %s 查询失败: %v", serverTypeToString(serverType), srv, result.Err)
+				logger.Errorf("[UPSTREAM] %s 服务器 %s 查询 %s 失败: %v", serverTypeToString(serverType), srv, domain, result.Err)
 			}
 		}(server)
 	}
@@ -119,7 +125,7 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 	}
 
 	// 所有查询都失败，返回最后一个错误
-	logger.Errorf("[UPSTREAM] 所有 %s 服务器均查询失败", serverTypeToString(serverType))
+	logger.Errorf("[UPSTREAM] 所有 %s 服务器查询 %s 均失败", serverTypeToString(serverType), domain)
 	return &Result{
 		Err:  fmt.Errorf("all %s servers failed", serverTypeToString(serverType)),
 		Type: serverType,
