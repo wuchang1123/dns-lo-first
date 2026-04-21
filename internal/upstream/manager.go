@@ -3,7 +3,6 @@ package upstream
 import (
 	"context"
 	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -104,18 +103,6 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 			} else {
 				// 记录失败的服务器和错误
 				logger.Errorf("[UPSTREAM] %s 服务器 %s 查询失败: %v", serverTypeToString(serverType), srv, result.Err)
-
-				// 当海外服务器失败时，尝试ping测试
-				if serverType == OverseasServer {
-					go func() {
-						pingResult := pingServer(srv)
-						if pingResult {
-							logger.Infof("[UPSTREAM] %s 服务器 %s ping 测试成功", serverTypeToString(serverType), srv)
-						} else {
-							logger.Warnf("[UPSTREAM] %s 服务器 %s ping 测试失败", serverTypeToString(serverType), srv)
-						}
-					}()
-				}
 			}
 		}(server)
 	}
@@ -204,41 +191,6 @@ func serverTypeToString(t ServerType) string {
 	default:
 		return "unknown"
 	}
-}
-
-// pingServer 测试服务器连通性
-func pingServer(server string) bool {
-	// 提取IP地址（去掉端口）
-	ipStr, _, err := net.SplitHostPort(server)
-	if err != nil {
-		// 如果没有端口，直接使用server作为IP
-		ipStr = server
-	}
-
-	// 尝试ping服务器
-	addr, err := net.ResolveIPAddr("ip", ipStr)
-	if err != nil {
-		return false
-	}
-
-	conn, err := net.DialTimeout("ip4:icmp", addr.String(), 2*time.Second)
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-
-	// 发送ping包
-	message := []byte{8, 0, 0, 0, 0, 0, 0, 0}
-	_, err = conn.Write(message)
-	if err != nil {
-		return false
-	}
-
-	// 等待响应
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	buf := make([]byte, 1024)
-	_, err = conn.Read(buf)
-	return err == nil
 }
 
 // GetLocalServers 获取本地服务器列表
