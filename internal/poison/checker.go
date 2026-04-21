@@ -220,9 +220,10 @@ func (c *Checker) saveCache() {
 		for j, ip := range ips {
 			entry := ipMap[ip]
 			// 手动构建entry的JSON字符串，确保不换行
-			entryStr := fmt.Sprintf(`{"passed":%t,"reason":%q,"expiresAt":%q}`,
+			entryStr := fmt.Sprintf(`{"passed":%t,"reason":%q,"source":%q,"expiresAt":%q}`,
 				entry.Passed,
 				entry.Reason,
+				entry.Source,
 				entry.ExpiresAt.Format(time.RFC3339Nano))
 			if j < len(ips)-1 {
 				builder.WriteString(fmt.Sprintf("    %q: %s,\n", ip, entryStr))
