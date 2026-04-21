@@ -31,10 +31,12 @@ type Result struct {
 
 // Manager 上游服务器管理器
 type Manager struct {
-	localServers    []string
-	overseasServers []string
-	client          *dns.Client
-	timeout         time.Duration
+	localServers     []string
+	overseasServers  []string
+	localBindAddr    string
+	overseasBindAddr string
+	client           *dns.Client
+	timeout          time.Duration
 }
 
 // NewManager 创建上游管理器
@@ -48,6 +50,14 @@ func NewManager(local, overseas []string) *Manager {
 		},
 		timeout: 5 * time.Second,
 	}
+}
+
+// NewManagerWithBind 创建上游管理器（支持指定出口地址）
+func NewManagerWithBind(local, overseas []string, localBind, overseasBind string) *Manager {
+	m := NewManager(local, overseas)
+	m.localBindAddr = localBind
+	m.overseasBindAddr = overseasBind
+	return m
 }
 
 // QueryLocal 查询本地DNS
@@ -151,14 +161,77 @@ func (m *Manager) querySingle(ctx context.Context, msg *dns.Msg, server string, 
 	respChan := make(chan *dns.Msg, 1)
 	errChan := make(chan error, 1)
 
-	go func() {
-		r, _, err := m.client.Exchange(msg, server)
-		if err != nil {
-			errChan <- err
-			return
+	// 创建客户端，使用指定的出口地址
+	var bindAddr string
+	if serverType == LocalServer {
+		bindAddr = m.localBindAddr
+	} else {
+		bindAddr = m.overseasBindAddr
+	}
+
+	go func(srv string) {
+		var r *dns.Msg
+		var err error
+
+		// 如果指定了出口地址，使用自定义UDP连接
+		if bindAddr != "" {
+			// 解析目标服务器地址
+			_, err = net.ResolveUDPAddr("udp", srv)
+			if err != nil {
+				errChan <- fmt.Errorf("解析服务器地址失败: %w", err)
+				return
+			}
+
+			// 解析本地出口地址
+			localUDPAddr, err := net.ResolveUDPAddr("udp", bindAddr+":0")
+			if err != nil {
+				errChan <- fmt.Errorf("解析出口地址失败: %w", err)
+				return
+			}
+
+			// 创建UDP连接
+			conn, err := net.ListenUDP("udp", localUDPAddr)
+			if err != nil {
+				errChan <- fmt.Errorf("创建UDP监听失败: %w", err)
+				return
+			}
+			defer conn.Close()
+
+			// 设置超时
+			conn.SetReadDeadline(time.Now().Add(m.timeout))
+			conn.SetWriteDeadline(time.Now().Add(m.timeout))
+
+			// 创建DNS客户端连接
+			dnsConn := &dns.Conn{Conn: conn}
+
+			// 发送查询
+			err = dnsConn.WriteMsg(msg)
+			if err != nil {
+				errChan <- fmt.Errorf("发送DNS请求失败: %w", err)
+				return
+			}
+
+			// 读取响应
+			r, err = dnsConn.ReadMsg()
+			if err != nil {
+				errChan <- fmt.Errorf("读取DNS响应失败: %w", err)
+				return
+			}
+		} else {
+			// 使用默认方式查询
+			client := &dns.Client{
+				Net:     "udp",
+				Timeout: m.timeout,
+			}
+			r, _, err = client.Exchange(msg, srv)
+			if err != nil {
+				errChan <- err
+				return
+			}
 		}
+
 		respChan <- r
-	}()
+	}(server)
 
 	select {
 	case <-queryCtx.Done():
