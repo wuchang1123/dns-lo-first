@@ -94,14 +94,17 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if cached != nil {
 		resp := cached.Copy()
 		resp.Id = r.Id
-		if err := w.WriteMsg(resp); err != nil {
-			logger.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
-		}
 		if isExpired {
-			logger.Printf("[CACHE HIT] %s -> 从过期缓存返回，后台刷新", domain)
+			for _, answer := range resp.Answer {
+				answer.Header().Ttl = 1
+			}
+			logger.Printf("[CACHE HIT] %s -> 从过期缓存返回 (TTL=1秒)，后台刷新", domain)
 			go s.refreshDNSCache(r, domain)
 		} else {
 			logger.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
+		}
+		if err := w.WriteMsg(resp); err != nil {
+			logger.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
 		}
 		return
 	}
