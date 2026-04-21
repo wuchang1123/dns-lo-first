@@ -237,6 +237,7 @@ func (s *Server) getPassedIPsFromCache(domain string) ([]net.IP, bool) {
 
 	data, err := os.ReadFile(cacheFile)
 	if err != nil {
+		logger.Errorf("[CACHE CHECK] %s -> 读取缓存文件失败: %v", domain, err)
 		return nil, false
 	}
 

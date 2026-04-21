@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"lo-dns/internal/logger"
+
 	"github.com/miekg/dns"
 )
 
@@ -99,8 +101,7 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 				default:
 				}
 			} else {
-				// 记录失败的服务器和错误
-				fmt.Printf("[UPSTREAM] %s 服务器 %s 查询失败: %v\n", serverTypeToString(serverType), srv, result.Err)
+				logger.Errorf("[UPSTREAM] %s 服务器 %s 查询失败: %v", serverTypeToString(serverType), srv, result.Err)
 			}
 		}(server)
 	}
@@ -117,6 +118,7 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 	}
 
 	// 所有查询都失败，返回最后一个错误
+	logger.Errorf("[UPSTREAM] 所有 %s 服务器均查询失败", serverTypeToString(serverType))
 	return &Result{
 		Err:  fmt.Errorf("all %s servers failed", serverTypeToString(serverType)),
 		Type: serverType,

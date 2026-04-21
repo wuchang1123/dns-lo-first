@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lo-dns/internal/logger"
 )
 
 type Manager struct {
@@ -66,6 +68,11 @@ func (m *Manager) Load() error {
 func (m *Manager) loadFromFile(filepath string) error {
 	f, err := os.Open(filepath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			logger.Infof("[DOMAIN] 域名文件不存在，将从远程下载: %s", filepath)
+		} else {
+			logger.Errorf("[DOMAIN] 打开域名文件失败: %v", err)
+		}
 		return err
 	}
 	defer f.Close()
@@ -122,6 +129,7 @@ func (m *Manager) Update() error {
 	// 确保目录存在
 	dir := getDir(m.config.FilePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		logger.Errorf("[DOMAIN] 创建域名文件目录失败: %v", err)
 		return err
 	}
 
@@ -129,6 +137,7 @@ func (m *Manager) Update() error {
 	tmpFile := m.config.FilePath + ".tmp"
 	f, err := os.Create(tmpFile)
 	if err != nil {
+		logger.Errorf("[DOMAIN] 创建域名临时文件失败: %v", err)
 		return err
 	}
 
@@ -141,12 +150,14 @@ func (m *Manager) Update() error {
 
 	if err := scanner.Err(); err != nil {
 		os.Remove(tmpFile)
+		logger.Errorf("[DOMAIN] 扫描域名列表响应失败: %v", err)
 		return err
 	}
 
 	// 原子替换
 	if err := os.Rename(tmpFile, m.config.FilePath); err != nil {
 		os.Remove(tmpFile)
+		logger.Errorf("[DOMAIN] 原子替换域名文件失败: %v", err)
 		return err
 	}
 

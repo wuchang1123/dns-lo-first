@@ -102,11 +102,12 @@ func (c *Checker) checkAndSyncCacheFile() {
 	info, err := os.Stat(c.cacheFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// 文件不存在，清空内存缓存
 			c.cacheMu.Lock()
 			c.cache = make(cacheData)
 			c.cacheMu.Unlock()
 			logger.Infof("[CACHE SYNC] 缓存文件不存在，已清空内存缓存")
+		} else {
+			logger.Errorf("[CACHE SYNC] 检查缓存文件状态失败: %v", err)
 		}
 		return
 	}
@@ -124,6 +125,7 @@ func (c *Checker) checkAndSyncCacheFile() {
 	// 读取文件内容并验证是否为有效JSON
 	data, err := os.ReadFile(c.cacheFile)
 	if err != nil {
+		logger.Errorf("[CACHE SYNC] 读取缓存文件失败: %v", err)
 		return
 	}
 
