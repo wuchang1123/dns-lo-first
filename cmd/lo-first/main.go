@@ -111,12 +111,7 @@ func main() {
 	logger.Printf("基础目录: %s", cfg.BaseDir)
 
 	// 创建上游DNS管理器
-	upstreamMgr := upstream.NewManagerWithBind(
-		cfg.Upstream.Local,
-		cfg.Upstream.Overseas,
-		cfg.Upstream.LocalBindAddr,
-		cfg.Upstream.OverseasBindAddr,
-	)
+	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
 
 	// 创建域名管理器
 	domainMgr := domain.NewManager(domain.Config{

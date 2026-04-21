@@ -27,10 +27,8 @@ type ServerConfig struct {
 
 // UpstreamConfig 上游服务器配置
 type UpstreamConfig struct {
-	Local           []string `yaml:"local"`
-	Overseas        []string `yaml:"overseas"`
-	LocalBindAddr   string   `yaml:"local_bind_addr"`   // 本地出口地址（网卡地址）
-	OverseasBindAddr string  `yaml:"overseas_bind_addr"` // 海外出口地址（网卡地址）
+	Local    []string `yaml:"local"`
+	Overseas []string `yaml:"overseas"`
 }
 
 // LocalDomainsConfig 所在国域名配置

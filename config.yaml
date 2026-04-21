@@ -25,11 +25,8 @@ upstream:
     - "8.8.8.8:53"        # Google DNS
     - "8.8.4.4:53"        # Google DNS备用
     - "1.1.1.1:53"        # Cloudflare DNS
-
-  # 本地出口地址（网卡地址），留空则使用默认路由
-  local_bind_addr: ""
-  # 海外出口地址（网卡地址），留空则使用默认路由
-  overseas_bind_addr: ""
+    - "https://dns.google/dns-query"  # Google DNS over HTTPS (RFC 8484)
+    - "https://dns.google/resolve"     # Google DNS JSON API
 
 # 所在国域名列表配置
 local_domains:

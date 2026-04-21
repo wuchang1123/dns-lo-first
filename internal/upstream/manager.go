@@ -2,8 +2,13 @@ package upstream
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,12 +36,10 @@ type Result struct {
 
 // Manager 上游服务器管理器
 type Manager struct {
-	localServers     []string
-	overseasServers  []string
-	localBindAddr    string
-	overseasBindAddr string
-	client           *dns.Client
-	timeout          time.Duration
+	localServers    []string
+	overseasServers []string
+	client          *dns.Client
+	timeout         time.Duration
 }
 
 // NewManager 创建上游管理器
@@ -50,14 +53,6 @@ func NewManager(local, overseas []string) *Manager {
 		},
 		timeout: 5 * time.Second,
 	}
-}
-
-// NewManagerWithBind 创建上游管理器（支持指定出口地址）
-func NewManagerWithBind(local, overseas []string, localBind, overseasBind string) *Manager {
-	m := NewManager(local, overseas)
-	m.localBindAddr = localBind
-	m.overseasBindAddr = overseasBind
-	return m
 }
 
 // QueryLocal 查询本地DNS
@@ -153,6 +148,11 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 func (m *Manager) querySingle(ctx context.Context, msg *dns.Msg, server string, serverType ServerType) *Result {
 	start := time.Now()
 
+	// 检查是否为HTTPS DNS服务器
+	if strings.HasPrefix(server, "https://") {
+		return m.queryHTTPS(ctx, msg, server, serverType, time.Since(start))
+	}
+
 	// 设置超时
 	queryCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
@@ -161,77 +161,14 @@ func (m *Manager) querySingle(ctx context.Context, msg *dns.Msg, server string, 
 	respChan := make(chan *dns.Msg, 1)
 	errChan := make(chan error, 1)
 
-	// 创建客户端，使用指定的出口地址
-	var bindAddr string
-	if serverType == LocalServer {
-		bindAddr = m.localBindAddr
-	} else {
-		bindAddr = m.overseasBindAddr
-	}
-
-	go func(srv string) {
-		var r *dns.Msg
-		var err error
-
-		// 如果指定了出口地址，使用自定义UDP连接
-		if bindAddr != "" {
-			// 解析目标服务器地址
-			_, err = net.ResolveUDPAddr("udp", srv)
-			if err != nil {
-				errChan <- fmt.Errorf("解析服务器地址失败: %w", err)
-				return
-			}
-
-			// 解析本地出口地址
-			localUDPAddr, err := net.ResolveUDPAddr("udp", bindAddr+":0")
-			if err != nil {
-				errChan <- fmt.Errorf("解析出口地址失败: %w", err)
-				return
-			}
-
-			// 创建UDP连接
-			conn, err := net.ListenUDP("udp", localUDPAddr)
-			if err != nil {
-				errChan <- fmt.Errorf("创建UDP监听失败: %w", err)
-				return
-			}
-			defer conn.Close()
-
-			// 设置超时
-			conn.SetReadDeadline(time.Now().Add(m.timeout))
-			conn.SetWriteDeadline(time.Now().Add(m.timeout))
-
-			// 创建DNS客户端连接
-			dnsConn := &dns.Conn{Conn: conn}
-
-			// 发送查询
-			err = dnsConn.WriteMsg(msg)
-			if err != nil {
-				errChan <- fmt.Errorf("发送DNS请求失败: %w", err)
-				return
-			}
-
-			// 读取响应
-			r, err = dnsConn.ReadMsg()
-			if err != nil {
-				errChan <- fmt.Errorf("读取DNS响应失败: %w", err)
-				return
-			}
-		} else {
-			// 使用默认方式查询
-			client := &dns.Client{
-				Net:     "udp",
-				Timeout: m.timeout,
-			}
-			r, _, err = client.Exchange(msg, srv)
-			if err != nil {
-				errChan <- err
-				return
-			}
+	go func() {
+		r, _, err := m.client.Exchange(msg, server)
+		if err != nil {
+			errChan <- err
+			return
 		}
-
 		respChan <- r
-	}(server)
+	}()
 
 	select {
 	case <-queryCtx.Done():
@@ -281,17 +218,43 @@ func serverTypeToString(t ServerType) string {
 
 // pingServer 测试服务器连通性
 func pingServer(server string) bool {
-	// 提取IP地址（去掉端口）
-	ipStr, _, err := net.SplitHostPort(server)
-	if err != nil {
-		// 如果没有端口，直接使用server作为IP
-		ipStr = server
+	// 提取IP地址或域名
+	var ipStr string
+
+	// 处理HTTPS URL
+	if strings.HasPrefix(server, "https://") {
+		// 解析URL，提取域名
+		url := server
+		// 去掉https://前缀
+		host := strings.TrimPrefix(url, "https://")
+		// 提取域名部分（去掉路径）
+		if idx := strings.Index(host, "/"); idx != -1 {
+			host = host[:idx]
+		}
+		ipStr = host
+	} else {
+		// 处理普通服务器地址（IP:端口）
+		var err error
+		ipStr, _, err = net.SplitHostPort(server)
+		if err != nil {
+			// 如果没有端口，直接使用server作为IP
+			ipStr = server
+		}
 	}
 
 	// 尝试ping服务器
 	addr, err := net.ResolveIPAddr("ip", ipStr)
 	if err != nil {
-		return false
+		// 如果解析失败，尝试解析域名
+		addrs, err := net.LookupHost(ipStr)
+		if err != nil || len(addrs) == 0 {
+			return false
+		}
+		ipStr = addrs[0]
+		addr, err = net.ResolveIPAddr("ip", ipStr)
+		if err != nil {
+			return false
+		}
 	}
 
 	conn, err := net.DialTimeout("ip4:icmp", addr.String(), 2*time.Second)
@@ -322,4 +285,224 @@ func (m *Manager) GetLocalServers() []string {
 // GetOverseasServers 获取海外服务器列表
 func (m *Manager) GetOverseasServers() []string {
 	return m.overseasServers
+}
+
+// queryHTTPS 查询HTTPS DNS服务器
+func (m *Manager) queryHTTPS(ctx context.Context, msg *dns.Msg, server string, serverType ServerType, duration time.Duration) *Result {
+	// 设置超时
+	queryCtx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+
+	httpClient := &http.Client{
+		Timeout: m.timeout,
+	}
+
+	// 检查是否为JSON API
+	if strings.Contains(server, "/resolve") {
+		return m.queryHTTPSJSON(queryCtx, msg, server, serverType, httpClient, duration)
+	}
+
+	// 否则使用RFC 8484 (DoH)
+	return m.queryHTTPSDoH(queryCtx, msg, server, serverType, httpClient, duration)
+}
+
+// queryHTTPSDoH 使用RFC 8484查询HTTPS DNS
+func (m *Manager) queryHTTPSDoH(ctx context.Context, msg *dns.Msg, server string, serverType ServerType, client *http.Client, duration time.Duration) *Result {
+	// 编码DNS消息
+	buf, err := msg.Pack()
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to pack DNS message: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 构建请求
+	req, err := http.NewRequestWithContext(ctx, "GET", server, nil)
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to create request: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 添加必要的头
+	req.Header.Set("Accept", "application/dns-message")
+	req.Header.Set("Content-Type", "application/dns-message")
+
+	// 将DNS消息作为base64url编码的查询参数
+	encoded := base64.RawURLEncoding.EncodeToString(buf)
+	query := req.URL.Query()
+	query.Add("dns", encoded)
+	req.URL.RawQuery = query.Encode()
+
+	// 发送请求
+	resp, err := client.Do(req)
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("HTTP request failed: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return &Result{
+			Err:      fmt.Errorf("HTTP error: %s", resp.Status),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to read response: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 解析DNS响应
+	responseMsg := &dns.Msg{}
+	if err := responseMsg.Unpack(body); err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to unpack DNS response: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	return &Result{
+		Response: responseMsg,
+		Server:   server,
+		Type:     serverType,
+		Duration: duration + time.Since(time.Now()),
+	}
+}
+
+// queryHTTPSJSON 使用JSON API查询HTTPS DNS
+func (m *Manager) queryHTTPSJSON(ctx context.Context, msg *dns.Msg, server string, serverType ServerType, client *http.Client, duration time.Duration) *Result {
+	// 提取查询信息
+	if len(msg.Question) == 0 {
+		return &Result{
+			Err:      fmt.Errorf("no questions in DNS message"),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	q := msg.Question[0]
+
+	// 构建请求URL
+	req, err := http.NewRequestWithContext(ctx, "GET", server, nil)
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to create request: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 添加查询参数
+	query := req.URL.Query()
+	query.Add("name", q.Name)
+	query.Add("type", fmt.Sprintf("%d", q.Qtype))
+	req.URL.RawQuery = query.Encode()
+
+	// 发送请求
+	resp, err := client.Do(req)
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("HTTP request failed: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态
+	if resp.StatusCode != http.StatusOK {
+		return &Result{
+			Err:      fmt.Errorf("HTTP error: %s", resp.Status),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 读取响应
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to read response: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 解析JSON响应
+	var jsonResp struct {
+		Status int `json:"Status"`
+		Answer []struct {
+			Name string `json:"name"`
+			Type int    `json:"type"`
+			TTL  int    `json:"TTL"`
+			Data string `json:"data"`
+		} `json:"Answer"`
+	}
+
+	if err := json.Unmarshal(body, &jsonResp); err != nil {
+		return &Result{
+			Err:      fmt.Errorf("failed to parse JSON response: %v", err),
+			Server:   server,
+			Type:     serverType,
+			Duration: duration + time.Since(time.Now()),
+		}
+	}
+
+	// 构建DNS响应
+	responseMsg := &dns.Msg{}
+	responseMsg.SetReply(msg)
+	responseMsg.Rcode = jsonResp.Status
+
+	// 添加回答
+	for _, ans := range jsonResp.Answer {
+		var rr dns.RR
+		switch uint16(ans.Type) {
+		case dns.TypeA:
+			rr, err = dns.NewRR(fmt.Sprintf("%s %d IN A %s", ans.Name, ans.TTL, ans.Data))
+		case dns.TypeAAAA:
+			rr, err = dns.NewRR(fmt.Sprintf("%s %d IN AAAA %s", ans.Name, ans.TTL, ans.Data))
+		case dns.TypeCNAME:
+			rr, err = dns.NewRR(fmt.Sprintf("%s %d IN CNAME %s", ans.Name, ans.TTL, ans.Data))
+		default:
+			continue
+		}
+		if err == nil {
+			responseMsg.Answer = append(responseMsg.Answer, rr)
+		}
+	}
+
+	return &Result{
+		Response: responseMsg,
+		Server:   server,
+		Type:     serverType,
+		Duration: duration + time.Since(time.Now()),
+	}
 }
