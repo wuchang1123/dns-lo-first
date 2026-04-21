@@ -162,6 +162,15 @@ func (m *Manager) querySingle(ctx context.Context, msg *dns.Msg, server string, 
 			Duration: time.Since(start),
 		}
 	case r := <-respChan:
+		// 检查DNS响应代码
+		if r.Rcode != dns.RcodeSuccess {
+			return &Result{
+				Err:      fmt.Errorf("DNS response error: %s", dns.RcodeToString[r.Rcode]),
+				Server:   server,
+				Type:     serverType,
+				Duration: time.Since(start),
+			}
+		}
 		return &Result{
 			Response: r,
 			Server:   server,
