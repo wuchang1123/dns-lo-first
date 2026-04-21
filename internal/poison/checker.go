@@ -181,6 +181,11 @@ func (c *Checker) setCache(domain string, ip net.IP, passed bool, reason string,
 	go c.saveCache()
 }
 
+// GetCacheFile 获取缓存文件路径
+func (c *Checker) GetCacheFile() string {
+	return c.cacheFile
+}
+
 // saveCache 保存缓存到文件
 func (c *Checker) saveCache() {
 	c.cacheMu.RLock()

@@ -227,8 +227,8 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 
 // getPassedIPsFromCache 从缓存获取通过的IP（乐观缓存策略）
 func (s *Server) getPassedIPsFromCache(domain string) ([]net.IP, bool) {
-	// 先检查缓存文件状态
-	cacheFile := "./cache/tls_cache.json"
+	// 从 poisonChecker 获取缓存文件路径
+	cacheFile := s.poisonChecker.GetCacheFile()
 
 	// 检查缓存文件是否存在且非空
 	info, err := os.Stat(cacheFile)
