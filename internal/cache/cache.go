@@ -30,8 +30,13 @@ func NewDNSCache(maxSize int, ttl time.Duration) *DNSCache {
 }
 
 func (c *DNSCache) Get(key string) (*dns.Msg, bool) {
+	_, msg, _ := c.GetWithExpiry(key)
+	return msg, msg != nil
+}
+
+func (c *DNSCache) GetWithExpiry(key string) (bool, *dns.Msg, time.Time) {
 	if c.maxSize == 0 {
-		return nil, false
+		return false, nil, time.Time{}
 	}
 
 	c.mu.RLock()
@@ -39,14 +44,11 @@ func (c *DNSCache) Get(key string) (*dns.Msg, bool) {
 
 	entry, exists := c.cache[key]
 	if !exists {
-		return nil, false
+		return false, nil, time.Time{}
 	}
 
-	if time.Now().After(entry.expiry) {
-		return nil, false
-	}
-
-	return entry.response, true
+	isExpired := time.Now().After(entry.expiry)
+	return isExpired, entry.response, entry.expiry
 }
 
 func (c *DNSCache) Set(key string, response *dns.Msg) {

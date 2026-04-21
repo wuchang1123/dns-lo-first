@@ -90,13 +90,19 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
-	if cached, ok := s.dnsCache.Get(domain); ok {
+	isExpired, cached, _ := s.dnsCache.GetWithExpiry(domain)
+	if cached != nil {
 		resp := cached.Copy()
 		resp.Id = r.Id
 		if err := w.WriteMsg(resp); err != nil {
 			logger.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
 		}
-		logger.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
+		if isExpired {
+			logger.Printf("[CACHE HIT] %s -> 从过期缓存返回，后台刷新", domain)
+			go s.refreshDNSCache(r, domain)
+		} else {
+			logger.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
+		}
 		return
 	}
 
@@ -519,6 +525,51 @@ func extractIPs(msg *dns.Msg) []net.IP {
 		}
 	}
 	return ips
+}
+
+// refreshDNSCache 后台刷新DNS缓存
+func (s *Server) refreshDNSCache(r *dns.Msg, domain string) {
+	// 检查是否为overpass域名
+	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
+	if isOverpassDomain {
+		result := s.upstreamMgr.QueryOverseas(context.Background(), r)
+		if result.Err == nil && result.Response != nil {
+			s.dnsCache.Set(domain, result.Response)
+			logger.Printf("[CACHE REFRESH] %s -> 海外DNS缓存已更新", domain)
+		}
+		return
+	}
+
+	// 检查是否为本地域名
+	isLocalDomain := s.domainMgr.IsLocalDomain(domain)
+	if isLocalDomain {
+		result := s.upstreamMgr.QueryLocal(context.Background(), r)
+		if result.Err == nil && result.Response != nil {
+			s.dnsCache.Set(domain, result.Response)
+			logger.Printf("[CACHE REFRESH] %s -> 本地DNS缓存已更新", domain)
+		}
+		return
+	}
+
+	// 其他域名：同时查询本地和海外
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	localResult, overseasResult := s.upstreamMgr.QueryAll(ctx, r)
+
+	if localResult != nil && localResult.Err == nil && localResult.Response != nil {
+		ips := extractIPs(localResult.Response)
+		s.processTLSCheck(domain, ips, "local", "[CACHE REFRESH]")
+	}
+
+	if overseasResult != nil && overseasResult.Err == nil && overseasResult.Response != nil {
+		ips := extractIPs(overseasResult.Response)
+		s.processTLSCheck(domain, ips, "overseas", "[CACHE REFRESH]")
+
+		// 使用海外DNS结果更新缓存
+		s.dnsCache.Set(domain, overseasResult.Response)
+		logger.Printf("[CACHE REFRESH] %s -> 海外DNS缓存已更新", domain)
+	}
 }
 
 // getTargetDomain 从DNS响应中获取目标域名（处理CNAME）
