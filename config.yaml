@@ -25,9 +25,6 @@ upstream:
     - "8.8.8.8:53"        # Google DNS
     - "8.8.4.4:53"        # Google DNS备用
     - "1.1.1.1:53"        # Cloudflare DNS
-    - "https://dns.google/dns-query"  # Google DNS over HTTPS (RFC 8484)
-    - "https://dns.google/resolve"     # Google DNS JSON API
-    - "https://cloudflare-dns.com/dns-query"  # Cloudflare DNS over HTTPS (RFC 8484)
 
 # 所在国域名列表配置
 local_domains:
