@@ -416,8 +416,19 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 
 			// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
 			checkResult := s.poisonChecker.Check(domain, ips, "local")
-			logger.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP, passed=%v, reason=%s, duration=%v",
-				domain, len(ips), len(allIps), checkResult.Passed, checkResult.Reason, checkResult.Duration)
+
+			// 格式化IP列表用于日志
+			var ipsStr string
+			if len(checkResult.CheckedIPs) > 0 {
+				var ipList []string
+				for _, ip := range checkResult.CheckedIPs {
+					ipList = append(ipList, ip.String())
+				}
+				ipsStr = " [" + strings.Join(ipList, ", ") + "]"
+			}
+
+			logger.Printf("[POISON CHECK] %s: 检查 %d/%d 个IP%s, passed=%v, reason=%s, duration=%v",
+				domain, len(ips), len(allIps), ipsStr, checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 			if checkResult.Passed {
 				// 判毒通过，直接返回本地结果，不等待海外
@@ -468,8 +479,19 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 				if len(selectedIPs) > 0 {
 					// 进行TLS验证（使用原始域名，因为CDN证书通常对原始域名有效）
 					checkResult := s.poisonChecker.Check(domain, selectedIPs, "overseas")
-					logger.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
-						domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
+
+					// 格式化IP列表用于日志
+					var ipsStr string
+					if len(checkResult.CheckedIPs) > 0 {
+						var ipList []string
+						for _, ip := range checkResult.CheckedIPs {
+							ipList = append(ipList, ip.String())
+						}
+						ipsStr = " [" + strings.Join(ipList, ", ") + "]"
+					}
+
+					logger.Printf("[OVERSEAS CHECK] %s: 检查 1/%d 个IP%s, passed=%v, reason=%s, duration=%v",
+						domain, len(ips), ipsStr, checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 					if !checkResult.Passed {
 						// 验证失败，直接返回，TTL为1
@@ -636,8 +658,19 @@ func (s *Server) processTLSCheck(domain string, ips []net.IP, source string, log
 	if len(selectedIPs) > 0 {
 		// 进行TLS验证
 		checkResult := s.poisonChecker.Check(domain, selectedIPs, source)
-		logger.Printf("%s %s: 检查 1/%d 个IP, passed=%v, reason=%s, duration=%v",
-			logPrefix, domain, len(ips), checkResult.Passed, checkResult.Reason, checkResult.Duration)
+
+		// 格式化IP列表用于日志
+		var ipsStr string
+		if len(checkResult.CheckedIPs) > 0 {
+			var ipList []string
+			for _, ip := range checkResult.CheckedIPs {
+				ipList = append(ipList, ip.String())
+			}
+			ipsStr = " [" + strings.Join(ipList, ", ") + "]"
+		}
+
+		logger.Printf("%s %s: 检查 1/%d 个IP%s, passed=%v, reason=%s, duration=%v",
+			logPrefix, domain, len(ips), ipsStr, checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 		// 在后台对剩余IP进行TLS验证并缓存结果
 		if len(ips) > 1 {
