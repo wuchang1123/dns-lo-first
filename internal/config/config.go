@@ -23,6 +23,8 @@ type ServerConfig struct {
 	CacheSize   int    `yaml:"cache_size"`
 	LogTimezone string `yaml:"log_timezone"`
 	LogLevel    string `yaml:"log_level"`
+	LogPath     string `yaml:"log_path"`
+	CachePath   string `yaml:"cache_path"`
 }
 
 // UpstreamConfig 上游服务器配置
@@ -101,6 +103,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Server.LogLevel == "" {
 		cfg.Server.LogLevel = "info"
+	}
+	if cfg.Server.LogPath == "" {
+		cfg.Server.LogPath = "log"
+	}
+	if cfg.Server.CachePath == "" {
+		cfg.Server.CachePath = "cache"
 	}
 	if cfg.PoisonCheck.TLSTimeout == 0 {
 		cfg.PoisonCheck.TLSTimeout = 5

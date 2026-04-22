@@ -72,8 +72,12 @@ type ASNData struct {
 }
 
 // NewChecker 创建检查器
-func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, baseDir string) *Checker {
-	cacheDir := filepath.Join(baseDir, "cache")
+func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, baseDir string, cachePath string) *Checker {
+	// 处理TLS缓存目录
+	cacheDir := cachePath
+	if !filepath.IsAbs(cacheDir) {
+		cacheDir = filepath.Join(baseDir, cacheDir)
+	}
 	os.MkdirAll(cacheDir, 0755)
 
 	checker := &Checker{

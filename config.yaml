@@ -11,6 +11,10 @@ server:
   log_timezone: "Asia/Shanghai"
   # 日志等级: debug, info, warn, error, fatal
   log_level: "info"
+  # 日志目录路径
+  log_path: "./log"
+  # 缓存目录路径
+  cache_path: "./cache"
 
 # 上游DNS服务器
 upstream:
@@ -31,7 +35,7 @@ local_domains:
   # 数据源URL
   source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
   # 本地文件路径
-  file_path: "./data/china_domains.txt"
+  file_path: "./cache/china_domains.txt"
   # 更新间隔（小时）
   update_interval: 24
   # 自定义域名列表
@@ -64,4 +68,4 @@ poison_check:
   # 是否启用ASN判断
   asn_enabled: true
   # ASN数据文件路径
-  asn_file_path: "/data/domain_asn.json"
+  asn_file_path: "./data/domain_asn.json"

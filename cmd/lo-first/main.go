@@ -45,9 +45,17 @@ func main() {
 	}
 
 	// 创建目录
-	cacheDir := filepath.Join(cfg.BaseDir, "cache")
+	// 处理缓存目录
+	cacheDir := cfg.Server.CachePath
+	if !filepath.IsAbs(cacheDir) {
+		cacheDir = filepath.Join(cfg.BaseDir, cacheDir)
+	}
+	// 处理日志目录
+	logDir := cfg.Server.LogPath
+	if !filepath.IsAbs(logDir) {
+		logDir = filepath.Join(cfg.BaseDir, logDir)
+	}
 	dataDir := filepath.Join(cfg.BaseDir, "data")
-	logDir := filepath.Join(cfg.BaseDir, "log")
 
 	if err := os.MkdirAll(cfg.BaseDir, 0755); err != nil {
 		log.Fatalf("创建基础目录失败: %v", err)
@@ -126,7 +134,7 @@ func main() {
 	}
 
 	// 创建判毒检查器
-	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr, cfg.BaseDir)
+	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr, cfg.BaseDir, cfg.Server.CachePath)
 
 	// 输出ASN文件路径
 	asnFilePath := cfg.PoisonCheck.ASNFilePath
