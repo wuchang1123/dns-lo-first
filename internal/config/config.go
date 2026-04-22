@@ -42,12 +42,14 @@ type LocalDomainsConfig struct {
 
 // PoisonCheckConfig 判毒检查配置
 type PoisonCheckConfig struct {
-	Enabled              bool `yaml:"enabled"`
-	TLSTimeout           int  `yaml:"tls_timeout"`
-	ConcurrentChecks     int  `yaml:"concurrent_checks"`
-	TLSPort              int  `yaml:"tls_port"`
-	CacheRefreshInterval int  `yaml:"cache_refresh_interval"`
-	CacheTTL             int  `yaml:"cache_ttl"` // 缓存过期时间（分钟）
+	Enabled              bool   `yaml:"enabled"`
+	TLSTimeout           int    `yaml:"tls_timeout"`
+	ConcurrentChecks     int    `yaml:"concurrent_checks"`
+	TLSPort              int    `yaml:"tls_port"`
+	CacheRefreshInterval int    `yaml:"cache_refresh_interval"`
+	CacheTTL             int    `yaml:"cache_ttl"` // 缓存过期时间（分钟）
+	ASNEnabled           bool   `yaml:"asn_enabled"`
+	ASNFilePath          string `yaml:"asn_file_path"`
 }
 
 // GetLogLevel 将字符串日志等级转换为logger包中的等级常量
@@ -114,6 +116,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.PoisonCheck.CacheTTL == 0 {
 		cfg.PoisonCheck.CacheTTL = 30
+	}
+	if cfg.PoisonCheck.ASNFilePath == "" {
+		cfg.PoisonCheck.ASNFilePath = "data/domain_asn.json"
 	}
 
 	return &cfg, nil

@@ -44,6 +44,11 @@ type Checker struct {
 	cacheFile   string
 	upstreamMgr *upstream.Manager
 	stopChan    chan struct{}
+
+	// ASN相关字段
+	domainToOrg   map[string]string      // 域名 -> org
+	orgToPrefixes map[string][]net.IPNet // org -> IP段列表
+	asnMu         sync.RWMutex
 }
 
 // CheckResult 检查结果
@@ -52,6 +57,18 @@ type CheckResult struct {
 	Reason     string        // 未通过原因
 	CheckedIPs []net.IP      // 已检查的IP
 	Duration   time.Duration // 检查耗时
+}
+
+// ASNData ASN数据结构
+type ASNData struct {
+	Version int `json:"version"`
+	Orgs    map[string]struct {
+		Prefixes []string `json:"prefixes"`
+	} `json:"orgs"`
+	Suffixes []struct {
+		Suffix string `json:"suffix"`
+		Org    string `json:"org"`
+	} `json:"suffixes"`
 }
 
 // NewChecker 创建检查器
@@ -70,15 +87,26 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, bas
 				},
 			},
 		},
-		sem:         make(chan struct{}, cfg.ConcurrentChecks),
-		cache:       make(cacheData),
-		cacheTTL:    time.Duration(cfg.CacheTTL) * time.Minute,
-		cacheFile:   filepath.Join(cacheDir, "tls_cache.json"),
-		upstreamMgr: upstreamMgr,
-		stopChan:    make(chan struct{}),
+		sem:           make(chan struct{}, cfg.ConcurrentChecks),
+		cache:         make(cacheData),
+		cacheTTL:      time.Duration(cfg.CacheTTL) * time.Minute,
+		cacheFile:     filepath.Join(cacheDir, "tls_cache.json"),
+		upstreamMgr:   upstreamMgr,
+		stopChan:      make(chan struct{}),
+		domainToOrg:   make(map[string]string),
+		orgToPrefixes: make(map[string][]net.IPNet),
 	}
 
 	checker.loadCache()
+
+	// 加载ASN数据
+	if cfg.ASNEnabled {
+		asnFilePath := cfg.ASNFilePath
+		if !filepath.IsAbs(asnFilePath) {
+			asnFilePath = filepath.Join(baseDir, asnFilePath)
+		}
+		checker.loadASNData(asnFilePath)
+	}
 
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
@@ -140,6 +168,103 @@ func (c *Checker) checkAndSyncCacheFile() {
 		logger.Warnf("[CACHE SYNC] 缓存文件JSON格式无效，已清空内存缓存: %v", err)
 		return
 	}
+}
+
+// loadASNData 加载ASN数据
+func (c *Checker) loadASNData(filePath string) {
+	// 读取文件
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		logger.Errorf("读取ASN文件失败: %v", err)
+		return
+	}
+
+	// 解析JSON
+	var asnData ASNData
+	if err := json.Unmarshal(data, &asnData); err != nil {
+		logger.Errorf("解析ASN文件失败: %v", err)
+		return
+	}
+
+	c.asnMu.Lock()
+	defer c.asnMu.Unlock()
+
+	// 构建org到IP段的映射
+	for org, orgData := range asnData.Orgs {
+		prefixes := make([]net.IPNet, 0, len(orgData.Prefixes))
+		for _, prefixStr := range orgData.Prefixes {
+			_, ipNet, err := net.ParseCIDR(prefixStr)
+			if err != nil {
+				logger.Errorf("解析IP段 %s 失败: %v", prefixStr, err)
+				continue
+			}
+			prefixes = append(prefixes, *ipNet)
+		}
+		c.orgToPrefixes[org] = prefixes
+	}
+
+	// 构建域名到org的映射
+	for _, suffix := range asnData.Suffixes {
+		c.domainToOrg[suffix.Suffix] = suffix.Org
+	}
+
+	// 统计加载结果
+	logger.Infof("加载ASN数据成功: %d个域名映射, %d个组织IP段", len(c.domainToOrg), len(c.orgToPrefixes))
+}
+
+// getOrgByDomain 根据域名获取对应的org
+func (c *Checker) getOrgByDomain(domain string) string {
+	c.asnMu.RLock()
+	defer c.asnMu.RUnlock()
+
+	// 直接匹配
+	if org, ok := c.domainToOrg[domain]; ok {
+		return org
+	}
+
+	// 尝试匹配子域名
+	parts := strings.Split(domain, ".")
+	for i := 1; i < len(parts); i++ {
+		subDomain := strings.Join(parts[i:], ".")
+		if org, ok := c.domainToOrg[subDomain]; ok {
+			return org
+		}
+	}
+
+	return ""
+}
+
+// isIPInOrgPrefixes 判断IP是否在指定org的IP段内
+func (c *Checker) isIPInOrgPrefixes(ip net.IP, org string) bool {
+	c.asnMu.RLock()
+	defer c.asnMu.RUnlock()
+
+	prefixes, ok := c.orgToPrefixes[org]
+	if !ok {
+		return false
+	}
+
+	for _, prefix := range prefixes {
+		if prefix.Contains(ip) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// CheckIPInOrgPrefixes 检查IP是否在域名对应的组织IP段内
+func (c *Checker) CheckIPInOrgPrefixes(domain string, ip net.IP) bool {
+	if !c.config.ASNEnabled {
+		return false
+	}
+
+	org := c.getOrgByDomain(domain)
+	if org == "" {
+		return false
+	}
+
+	return c.isIPInOrgPrefixes(ip, org)
 }
 
 // getFromCache 从缓存获取结果
@@ -441,6 +566,18 @@ func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckRes
 	result := &tlsCheckResult{
 		ip:      ip,
 		success: false,
+	}
+
+	// ASN判断逻辑
+	if c.config.ASNEnabled {
+		org := c.getOrgByDomain(domain)
+		if org != "" {
+			if !c.isIPInOrgPrefixes(ip, org) {
+				result.err = fmt.Sprintf("IP不在%s的IP段内", org)
+				c.setCache(domain, ip, false, result.err, source)
+				return result
+			}
+		}
 	}
 
 	// 直接进行TLS握手验证

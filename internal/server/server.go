@@ -194,8 +194,27 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 		return nil, result.Err
 	}
 
-	// 提取IP并进行TLS验证
+	// 提取IP并进行ASN检查
 	ips := extractIPs(result.Response)
+	if len(ips) > 0 {
+		// 先检查ASN
+		if s.poisonChecker.CheckIPInOrgPrefixes(domain, ips[0]) {
+			// IP在组织IP段内，立即返回响应
+			logger.Printf("[ASN PASS] %s -> IP %s 在组织IP段内，立即返回响应", domain, ips[0])
+
+			// 构建响应，TTL设置为3
+			resp := s.poisonChecker.BuildDNSResponse(domain, ips[:1], 3)
+
+			// 后台继续执行TLS验证
+			go func() {
+				s.processTLSCheck(domain, ips, "overseas", "[OVERPASS CHECK]")
+			}()
+
+			return resp, nil
+		}
+	}
+
+	// 提取IP并进行TLS验证
 	s.processTLSCheck(domain, ips, "overseas", "[OVERPASS CHECK]")
 
 	return result.Response, nil
@@ -285,6 +304,23 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			// 随机选择最多1个IP进行检查
 			ips := randomSelectIPs(allIps)
 
+			// 先检查ASN
+			if len(ips) > 0 && s.poisonChecker.CheckIPInOrgPrefixes(domain, ips[0]) {
+				// IP在组织IP段内，立即返回响应
+				logger.Printf("[ASN PASS] %s -> IP %s 在组织IP段内，立即返回响应", domain, ips[0])
+
+				// 构建响应，TTL设置为3
+				resp := s.poisonChecker.BuildDNSResponse(domain, ips, 3)
+
+				// 后台继续执行TLS验证
+				go func() {
+					s.processTLSCheck(domain, allIps, "local", "[POISON CHECK]")
+				}()
+
+				cancel() // 取消海外查询
+				return resp, nil
+			}
+
 			// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
 			checkResult := s.poisonChecker.Check(domain, ips, "local")
 
@@ -345,6 +381,22 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			// 提取IP并进行TLS验证
 			ips := extractIPs(overseasResult.Response)
 			if len(ips) > 0 {
+				// 先检查ASN
+				if s.poisonChecker.CheckIPInOrgPrefixes(domain, ips[0]) {
+					// IP在组织IP段内，立即返回响应
+					logger.Printf("[ASN PASS] %s -> IP %s 在组织IP段内，立即返回响应", domain, ips[0])
+
+					// 构建响应，TTL设置为3
+					resp := s.poisonChecker.BuildDNSResponse(domain, ips[:1], 3)
+
+					// 后台继续执行TLS验证
+					go func() {
+						s.processTLSCheck(domain, ips, "overseas", "[OVERSEAS CHECK]")
+					}()
+
+					return resp, nil
+				}
+
 				// 随机选择一个IP
 				selectedIPs := randomSelectIPs(ips)
 				if len(selectedIPs) > 0 {

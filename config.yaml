@@ -61,3 +61,7 @@ poison_check:
   cache_refresh_interval: 30
   # 缓存过期时间（分钟）
   cache_ttl: 32
+  # 是否启用ASN判断
+  asn_enabled: true
+  # ASN数据文件路径
+  asn_file_path: "/data/domain_asn.json"

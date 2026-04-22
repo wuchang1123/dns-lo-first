@@ -128,6 +128,15 @@ func main() {
 	// 创建判毒检查器
 	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr, cfg.BaseDir)
 
+	// 输出ASN文件路径
+	asnFilePath := cfg.PoisonCheck.ASNFilePath
+	if !filepath.IsAbs(asnFilePath) {
+		asnFilePath = filepath.Join(cfg.BaseDir, asnFilePath)
+	}
+	if cfg.PoisonCheck.ASNEnabled {
+		logger.Printf("ASN文件路径: %s", asnFilePath)
+	}
+
 	// 创建DNS服务器
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)
 

@@ -3,4 +3,5 @@
 *.tmp
 /bin/lo/*
 /cache/*
-/data/*
+#/data/*
+/plan
