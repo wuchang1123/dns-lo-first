@@ -186,6 +186,55 @@ func (c *Checker) GetCacheFile() string {
 	return c.cacheFile
 }
 
+// GetPassedIPs 获取未过期且passed的IP列表
+func (c *Checker) GetPassedIPs(domain string) ([]net.IP, bool) {
+	c.checkAndSyncCacheFile()
+
+	c.cacheMu.RLock()
+	defer c.cacheMu.RUnlock()
+
+	domainCache, exists := c.cache[domain]
+	if !exists {
+		return nil, false
+	}
+
+	var passedIPs []net.IP
+	now := time.Now()
+
+	for ipStr, entry := range domainCache {
+		if entry.Passed && !now.After(entry.ExpiresAt) {
+			ip := net.ParseIP(ipStr)
+			if ip != nil {
+				passedIPs = append(passedIPs, ip)
+			}
+		}
+	}
+
+	return passedIPs, len(passedIPs) > 0
+}
+
+// BuildDNSResponse 用IP列表构建DNS响应
+func (c *Checker) BuildDNSResponse(domain string, ips []net.IP, ttl uint32) *dns.Msg {
+	msg := new(dns.Msg)
+	msg.SetQuestion(domain+".", dns.TypeA)
+	msg.Rcode = dns.RcodeSuccess
+
+	for _, ip := range ips {
+		rr := &dns.A{
+			Hdr: dns.RR_Header{
+				Name:   domain + ".",
+				Rrtype: dns.TypeA,
+				Class:  dns.ClassINET,
+				Ttl:    ttl,
+			},
+			A: ip,
+		}
+		msg.Answer = append(msg.Answer, rr)
+	}
+
+	return msg
+}
+
 // saveCache 保存缓存到文件
 func (c *Checker) saveCache() {
 	c.cacheMu.RLock()

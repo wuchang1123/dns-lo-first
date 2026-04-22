@@ -2,16 +2,13 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand/v2"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"lo-dns/internal/cache"
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
 	"lo-dns/internal/logger"
@@ -29,7 +26,6 @@ type Server struct {
 	poisonChecker  *poison.Checker
 	pendingQueries map[string]*pendingQuery
 	pendingMu      sync.Mutex
-	dnsCache       *cache.DNSCache
 }
 
 // pendingQuery 待处理查询
@@ -42,21 +38,12 @@ type pendingQuery struct {
 
 // NewServer 创建DNS服务器
 func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *domain.Manager, poisonChecker *poison.Checker) *Server {
-	var dnsCache *cache.DNSCache
-	if cfg.Server.CacheSize > 0 {
-		dnsCache = cache.NewDNSCache(cfg.Server.CacheSize, 5*time.Minute)
-		logger.Printf("[CACHE] DNS缓存已启用，大小: %d", cfg.Server.CacheSize)
-	} else {
-		logger.Println("[CACHE] DNS缓存已禁用")
-	}
-
 	return &Server{
 		config:         cfg,
 		upstreamMgr:    upstreamMgr,
 		domainMgr:      domainMgr,
 		poisonChecker:  poisonChecker,
 		pendingQueries: make(map[string]*pendingQuery),
-		dnsCache:       dnsCache,
 	}
 }
 
@@ -90,19 +77,12 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
-	isExpired, cached, _ := s.dnsCache.GetWithExpiry(domain)
-	if cached != nil {
-		resp := cached.Copy()
+	// 优先从TLS验证缓存获取passed IPs（统一缓存策略）
+	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
+	if hasValidCache {
+		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 60)
 		resp.Id = r.Id
-		if isExpired {
-			for _, answer := range resp.Answer {
-				answer.Header().Ttl = 1
-			}
-			logger.Printf("[CACHE HIT] %s -> 从过期缓存返回 (TTL=1秒)，后台刷新", domain)
-			go s.refreshDNSCache(r, domain)
-		} else {
-			logger.Printf("[CACHE HIT] %s -> 从缓存返回", domain)
-		}
+		logger.Printf("[CACHE HIT] %s -> 从TLS缓存返回 %d 个IP", domain, len(passedIPs))
 		if err := w.WriteMsg(resp); err != nil {
 			logger.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
 		}
@@ -168,10 +148,6 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	if pending.err == nil && pending.result != nil {
-		s.dnsCache.Set(domain, pending.result)
-	}
-
 	logger.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), time.Since(start))
 }
 
@@ -190,10 +166,10 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
 	// 乐观缓存策略：先检查TLS验证缓存是否有通过的IP
-	passedIPs, hasValidCache := s.getPassedIPsFromCache(domain)
+	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache {
 		// 构建响应消息
-		resp := buildResponse(r, passedIPs, 60)
+		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 60)
 
 		// 后台运行完整的查询和验证流程，更新缓存
 		go func() {
@@ -208,7 +184,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 			s.processTLSCheck(domain, ips, "overseas", "[OVERPASS BACKGROUND]")
 		}()
 
-		logger.Printf("[OVERPASS CACHE] %s -> 从缓存返回 %d 个通过的IP", domain, len(resp.Answer))
+		logger.Printf("[OVERPASS CACHE] %s -> 从缓存返回 %d 个通过的IP", domain, len(passedIPs))
 		return resp, nil
 	}
 
@@ -225,118 +201,13 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 	return result.Response, nil
 }
 
-// getPassedIPsFromCache 从缓存获取通过的IP（乐观缓存策略）
-func (s *Server) getPassedIPsFromCache(domain string) ([]net.IP, bool) {
-	// 从 poisonChecker 获取缓存文件路径
-	cacheFile := s.poisonChecker.GetCacheFile()
-
-	// 检查缓存文件是否存在且非空
-	info, err := os.Stat(cacheFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			logger.Printf("[CACHE CHECK] %s -> 缓存文件不存在", domain)
-		}
-		return nil, false
-	}
-
-	if info.Size() == 0 {
-		logger.Printf("[CACHE CHECK] %s -> 缓存文件为空", domain)
-		return nil, false
-	}
-
-	data, err := os.ReadFile(cacheFile)
-	if err != nil {
-		logger.Errorf("[CACHE CHECK] %s -> 读取缓存文件失败: %v", domain, err)
-		return nil, false
-	}
-
-	type cacheEntry struct {
-		Passed    bool      `json:"passed"`
-		Reason    string    `json:"reason"`
-		ExpiresAt time.Time `json:"expiresAt"`
-	}
-
-	type cacheData map[string]map[string]*cacheEntry
-
-	var cache cacheData
-	err = json.Unmarshal(data, &cache)
-	if err != nil {
-		logger.Printf("[CACHE CHECK] %s -> 缓存文件JSON格式无效: %v", domain, err)
-		return nil, false
-	}
-
-	domainCache, exists := cache[domain]
-	if !exists {
-		return nil, false
-	}
-
-	var passedIPs []net.IP
-	var expiredIPs []string
-	now := time.Now()
-
-	for ipStr, entry := range domainCache {
-		if entry.Passed {
-			ip := net.ParseIP(ipStr)
-			if ip != nil {
-				passedIPs = append(passedIPs, ip)
-				if len(passedIPs) >= 6 {
-					break
-				}
-			}
-		}
-		// 检查是否过期
-		if now.After(entry.ExpiresAt) {
-			expiredIPs = append(expiredIPs, ipStr)
-		}
-	}
-
-	// 如果有过期的缓存项，在后台默默更新
-	if len(expiredIPs) > 0 {
-		go func() {
-			// 触发一次DNS查询来更新缓存
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			dnsMsg := new(dns.Msg)
-			dnsMsg.SetQuestion(domain+".", dns.TypeA)
-
-			// 并发查询本地和海外DNS来更新缓存
-			localChan := make(chan *upstream.Result, 1)
-			overseasChan := make(chan *upstream.Result, 1)
-
-			go func() {
-				localChan <- s.upstreamMgr.QueryLocal(ctx, dnsMsg)
-			}()
-
-			go func() {
-				overseasChan <- s.upstreamMgr.QueryOverseas(ctx, dnsMsg)
-			}()
-
-			// 等待结果完成（不阻塞主流程）
-			select {
-			case <-localChan:
-			case <-time.After(3 * time.Second):
-			}
-
-			select {
-			case <-overseasChan:
-			case <-time.After(5 * time.Second):
-			}
-
-			logger.Printf("[CACHE REFRESH] %s -> 后台更新 %d 个过期缓存项", domain, len(expiredIPs))
-		}()
-	}
-
-	return passedIPs, len(passedIPs) > 0
-}
-
 // queryWithPoisonCheck 使用判毒系统查询
 func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, error) {
 	// 先检查缓存是否有通过的IP（乐观缓存策略）
-	passedIPs, hasValidCache := s.getPassedIPsFromCache(domain)
+	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache {
 		// 构建响应消息
-		resp := buildResponse(r, passedIPs, 300)
+		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 300)
 
 		// 记录日志
 		logger.Printf("[CACHE PASS] %s -> 从缓存返回 %d 个通过的IP", domain, len(passedIPs))
@@ -552,51 +423,6 @@ func extractIPs(msg *dns.Msg) []net.IP {
 	return ips
 }
 
-// refreshDNSCache 后台刷新DNS缓存
-func (s *Server) refreshDNSCache(r *dns.Msg, domain string) {
-	// 检查是否为overpass域名
-	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
-	if isOverpassDomain {
-		result := s.upstreamMgr.QueryOverseas(context.Background(), r)
-		if result.Err == nil && result.Response != nil {
-			s.dnsCache.Set(domain, result.Response)
-			logger.Printf("[CACHE REFRESH] %s -> 海外DNS缓存已更新", domain)
-		}
-		return
-	}
-
-	// 检查是否为本地域名
-	isLocalDomain := s.domainMgr.IsLocalDomain(domain)
-	if isLocalDomain {
-		result := s.upstreamMgr.QueryLocal(context.Background(), r)
-		if result.Err == nil && result.Response != nil {
-			s.dnsCache.Set(domain, result.Response)
-			logger.Printf("[CACHE REFRESH] %s -> 本地DNS缓存已更新", domain)
-		}
-		return
-	}
-
-	// 其他域名：同时查询本地和海外
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	localResult, overseasResult := s.upstreamMgr.QueryAll(ctx, r)
-
-	if localResult != nil && localResult.Err == nil && localResult.Response != nil {
-		ips := extractIPs(localResult.Response)
-		s.processTLSCheck(domain, ips, "local", "[CACHE REFRESH]")
-	}
-
-	if overseasResult != nil && overseasResult.Err == nil && overseasResult.Response != nil {
-		ips := extractIPs(overseasResult.Response)
-		s.processTLSCheck(domain, ips, "overseas", "[CACHE REFRESH]")
-
-		// 使用海外DNS结果更新缓存
-		s.dnsCache.Set(domain, overseasResult.Response)
-		logger.Printf("[CACHE REFRESH] %s -> 海外DNS缓存已更新", domain)
-	}
-}
-
 // getTargetDomain 从DNS响应中获取目标域名（处理CNAME）
 func getTargetDomain(msg *dns.Msg, originalDomain string) string {
 	for _, rr := range msg.Answer {
@@ -620,31 +446,6 @@ func randomSelectIPs(ips []net.IP) []net.IP {
 		ips[i], ips[j] = ips[j], ips[i]
 	}
 	return ips[:1]
-}
-
-// buildResponse 构建DNS响应消息
-func buildResponse(r *dns.Msg, ips []net.IP, ttl uint32) *dns.Msg {
-	resp := new(dns.Msg)
-	resp.SetReply(r)
-	resp.Rcode = dns.RcodeSuccess
-
-	// 添加最多6个IP
-	for i, ip := range ips {
-		if i >= 6 {
-			break
-		}
-		resp.Answer = append(resp.Answer, &dns.A{
-			Hdr: dns.RR_Header{
-				Name:   r.Question[0].Name,
-				Rrtype: dns.TypeA,
-				Class:  dns.ClassINET,
-				Ttl:    ttl,
-			},
-			A: ip,
-		})
-	}
-
-	return resp
 }
 
 // processTLSCheck 处理TLS验证和后台检查
