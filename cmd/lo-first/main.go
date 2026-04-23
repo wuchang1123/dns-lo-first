@@ -13,6 +13,7 @@ import (
 	"lo-dns/internal/asnmerge"
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
+	"lo-dns/internal/httpx"
 	"lo-dns/internal/logger"
 	"lo-dns/internal/poison"
 	"lo-dns/internal/server"
@@ -119,6 +120,10 @@ func main() {
 	logger.Printf("配置文件: %s", *configPath)
 	logger.Printf("基础目录: %s", cfg.BaseDir)
 
+	downloadNS := httpx.NameserversForDownload(cfg.BootstrapDNS, cfg.Upstream.Local, cfg.Upstream.Overseas)
+	logger.Printf("HTTP 下载使用递归 DNS 解析: %v", httpx.EffectiveResolvers(downloadNS))
+	downloadHTTP := httpx.NewHTTPClient(downloadNS, 3*time.Minute)
+
 	// 创建上游DNS管理器
 	upstreamMgr := upstream.NewManager(cfg.Upstream.Local, cfg.Upstream.Overseas)
 
@@ -129,7 +134,7 @@ func main() {
 		UpdateInterval: cfg.LocalDomains.UpdateInterval,
 		Custom:         cfg.LocalDomains.Custom,
 		Overpass:       cfg.LocalDomains.Overpass,
-	})
+	}, downloadHTTP)
 	if err := domainMgr.Load(); err != nil {
 		logger.Printf("加载所在国域名列表失败: %v", err)
 	}
@@ -148,7 +153,7 @@ func main() {
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)
 
 	// 创建更新器
-	updater := updater.NewUpdater(domainMgr, poisonChecker, cfg)
+	updater := updater.NewUpdater(domainMgr, poisonChecker, cfg, downloadHTTP)
 
 	// 如果仅更新数据
 	if *updateOnly {

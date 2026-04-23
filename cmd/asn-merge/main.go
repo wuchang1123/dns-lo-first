@@ -9,6 +9,7 @@ import (
 
 	"lo-dns/internal/asnmerge"
 	"lo-dns/internal/config"
+	"lo-dns/internal/httpx"
 )
 
 func main() {
@@ -37,10 +38,14 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
+	downloadNS := httpx.NameserversForDownload(cfg.BootstrapDNS, cfg.Upstream.Local, cfg.Upstream.Overseas)
+	downloadHTTP := httpx.NewHTTPClient(downloadNS, *timeout)
+
 	report, err := asnmerge.Merge(ctx, asnmerge.Options{
 		SeedPath:       seed,
 		OutPath:        out,
 		MergeAppleRIPE: *appleRIPE || cfg.PoisonCheck.ASNMergeAppleRIPE,
+		HTTPClient:     downloadHTTP,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "合并失败: %v\n", err)

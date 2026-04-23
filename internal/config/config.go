@@ -13,6 +13,9 @@ type Config struct {
 	BaseDir      string             `yaml:"base_dir"`
 	Server       ServerConfig       `yaml:"server"`
 	Upstream     UpstreamConfig     `yaml:"upstream"`
+	// BootstrapDNS HTTP 下载（所在国列表、ASN 合并等）解析 HTTPS 时使用的递归 DNS，形如 "223.5.5.5:53"。
+	// 启动阶段本机可能尚无可用 DNS，不宜依赖系统 resolv。非空时仅使用本列表；为空则从 upstream 取非回环地址，再兜底公共 DNS。
+	BootstrapDNS []string `yaml:"bootstrap_dns"`
 	LocalDomains LocalDomainsConfig `yaml:"local_domains"`
 	PoisonCheck  PoisonCheckConfig  `yaml:"poison_check"`
 }

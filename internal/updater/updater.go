@@ -3,6 +3,7 @@ package updater
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -19,17 +20,19 @@ type Updater struct {
 	domainMgr     *domain.Manager
 	poisonChecker *poison.Checker
 	config        *config.Config
+	download      *http.Client // ASN 合并等 HTTPS；nil 时 asnmerge 使用默认 Client
 	stopChan      chan struct{}
 	stopped       bool
 	mu            sync.Mutex
 }
 
-// NewUpdater 创建更新器；poisonChecker 可为 nil（仅写文件、不重载）。
-func NewUpdater(domainMgr *domain.Manager, poisonChecker *poison.Checker, cfg *config.Config) *Updater {
+// NewUpdater 创建更新器；poisonChecker 可为 nil（仅写文件、不重载）。download 用于 ASN 多源合并 HTTP；可与域名列表共用同一 Client。
+func NewUpdater(domainMgr *domain.Manager, poisonChecker *poison.Checker, cfg *config.Config, download *http.Client) *Updater {
 	return &Updater{
 		domainMgr:     domainMgr,
 		poisonChecker: poisonChecker,
 		config:        cfg,
+		download:      download,
 		stopChan:      make(chan struct{}),
 	}
 }
@@ -142,6 +145,7 @@ func (u *Updater) updateASNMerge() error {
 		SeedPath:       seed,
 		OutPath:        out,
 		MergeAppleRIPE: u.config.PoisonCheck.ASNMergeAppleRIPE,
+		HTTPClient:     u.download,
 	})
 	if err != nil {
 		return err

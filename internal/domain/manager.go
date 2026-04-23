@@ -14,10 +14,11 @@ import (
 )
 
 type Manager struct {
-	config   Config
-	domains  map[string]struct{}
-	overpass map[string]struct{}
-	mu       sync.RWMutex
+	config    Config
+	download  *http.Client // 远程列表下载；nil 时用默认 Client
+	domains   map[string]struct{}
+	overpass  map[string]struct{}
+	mu        sync.RWMutex
 }
 
 type Config struct {
@@ -28,9 +29,10 @@ type Config struct {
 	Overpass       []string `yaml:"overpass"`
 }
 
-func NewManager(cfg Config) *Manager {
+func NewManager(cfg Config, download *http.Client) *Manager {
 	return &Manager{
 		config:   cfg,
+		download: download,
 		domains:  make(map[string]struct{}),
 		overpass: make(map[string]struct{}),
 	}
@@ -115,7 +117,10 @@ func (m *Manager) Update() error {
 		return nil
 	}
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := m.download
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
 	resp, err := client.Get(m.config.SourceURL)
 	if err != nil {
 		return fmt.Errorf("下载域名列表失败: %w", err)
