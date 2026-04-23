@@ -419,14 +419,13 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 					if !checkResult.Passed {
 						// 验证失败，直接返回，TTL为1
 						logger.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，但是ttl设置为1", domain)
-						emptyResp := new(dns.Msg)
-						emptyResp.SetReply(r)
-						emptyResp.Rcode = dns.RcodeSuccess
+						// 基于原始海外响应创建响应，修改TTL为1
+						resp := overseasResult.Response.Copy()
 						// 确保TTL为1
-						for _, answer := range emptyResp.Answer {
+						for _, answer := range resp.Answer {
 							answer.Header().Ttl = 1
 						}
-						return emptyResp, nil
+						return resp, nil
 					}
 				}
 

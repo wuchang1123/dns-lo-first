@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"lo-dns/internal/asnmerge"
 	"lo-dns/internal/config"
 	"lo-dns/internal/logger"
 	"lo-dns/internal/upstream"
@@ -48,7 +49,10 @@ type Checker struct {
 	// ASN相关字段
 	domainToOrg   map[string]string      // 域名 -> org
 	orgToPrefixes map[string][]net.IPNet // org -> IP段列表
-	asnMu         sync.RWMutex
+	dnsClient     *dns.Client            // DNS客户端，用于反向查询
+	asnMu          sync.RWMutex
+	asnManualPath  string // 人工维护的 asn_file_path（后缀与回退前缀）
+	asnMergedPath  string // cache 下多源合并产物（优先前缀来源）
 }
 
 // CheckResult 检查结果
@@ -99,17 +103,23 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, bas
 		stopChan:      make(chan struct{}),
 		domainToOrg:   make(map[string]string),
 		orgToPrefixes: make(map[string][]net.IPNet),
+		dnsClient: &dns.Client{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	checker.loadCache()
 
-	// 加载ASN数据
+	asnManual := cfg.ASNFilePath
+	if !filepath.IsAbs(asnManual) {
+		asnManual = filepath.Join(baseDir, asnManual)
+	}
+	checker.asnManualPath = asnManual
+	checker.asnMergedPath = filepath.Join(cacheDir, asnmerge.MergedFileName)
 	if cfg.ASNEnabled {
-		asnFilePath := cfg.ASNFilePath
-		if !filepath.IsAbs(asnFilePath) {
-			asnFilePath = filepath.Join(baseDir, asnFilePath)
+		if err := checker.loadASNComposite(asnManual, checker.asnMergedPath); err != nil {
+			logger.Errorf("加载 ASN 失败: %v", err)
 		}
-		checker.loadASNData(asnFilePath)
 	}
 
 	go func() {
@@ -174,26 +184,79 @@ func (c *Checker) checkAndSyncCacheFile() {
 	}
 }
 
-// loadASNData 加载ASN数据
-func (c *Checker) loadASNData(filePath string) {
-	// 读取文件
-	data, err := os.ReadFile(filePath)
+// loadASNComposite 后缀始终来自人工文件；各 org 的 IP 前缀优先使用 cache 合并文件，不存在或无效时用人工文件。
+func (c *Checker) loadASNComposite(manualPath, mergedPath string) error {
+	handData, err := readASNFile(manualPath)
 	if err != nil {
-		logger.Errorf("读取ASN文件失败: %v", err)
-		return
+		return fmt.Errorf("读取人工 ASN 文件: %w", err)
 	}
+	var merged *ASNData
+	if mergedPath != "" {
+		if data, rerr := os.ReadFile(mergedPath); rerr == nil {
+			var m ASNData
+			if uerr := json.Unmarshal(data, &m); uerr != nil {
+				logger.Warnf("解析合并 ASN 缓存失败，前缀回退人工文件: %v", uerr)
+			} else if len(m.Orgs) > 0 {
+				merged = &m
+			}
+		} else if !os.IsNotExist(rerr) {
+			logger.Warnf("读取合并 ASN 缓存: %v", rerr)
+		}
+	}
+	combined := buildCompositeASN(handData, merged)
+	if err := c.replaceASNMaps(combined); err != nil {
+		return err
+	}
+	if merged != nil {
+		logger.Infof("加载ASN成功: 后缀来自人工配置, 前缀优先来自合并缓存 (%d 域名映射, %d 组织)", len(c.domainToOrg), len(c.orgToPrefixes))
+	} else {
+		logger.Infof("加载ASN成功: 仅人工配置（无合并缓存或缓存无效）(%d 域名映射, %d 组织)", len(c.domainToOrg), len(c.orgToPrefixes))
+	}
+	return nil
+}
 
-	// 解析JSON
+func readASNFile(path string) (*ASNData, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	var asnData ASNData
 	if err := json.Unmarshal(data, &asnData); err != nil {
-		logger.Errorf("解析ASN文件失败: %v", err)
-		return
+		return nil, err
+	}
+	return &asnData, nil
+}
+
+func buildCompositeASN(hand *ASNData, merged *ASNData) *ASNData {
+	out := &ASNData{
+		Version:  hand.Version,
+		Suffixes: hand.Suffixes,
+		Orgs:     make(map[string]struct{ Prefixes []string `json:"prefixes"` }),
+	}
+	for org, ho := range hand.Orgs {
+		prefixes := ho.Prefixes
+		if merged != nil {
+			if mo, ok := merged.Orgs[org]; ok && len(mo.Prefixes) > 0 {
+				prefixes = mo.Prefixes
+			}
+		}
+		out.Orgs[org] = struct{ Prefixes []string `json:"prefixes"` }{Prefixes: prefixes}
+	}
+	return out
+}
+
+// replaceASNMaps 用解析后的数据替换内存中的 ASN 映射（持锁）。
+func (c *Checker) replaceASNMaps(asnData *ASNData) error {
+	if len(asnData.Orgs) == 0 {
+		return fmt.Errorf("ASN orgs 为空")
+	}
+	if len(asnData.Suffixes) == 0 {
+		return fmt.Errorf("ASN suffixes 为空")
 	}
 
-	c.asnMu.Lock()
-	defer c.asnMu.Unlock()
+	domainToOrg := make(map[string]string)
+	orgToPrefixes := make(map[string][]net.IPNet)
 
-	// 构建org到IP段的映射
 	for org, orgData := range asnData.Orgs {
 		prefixes := make([]net.IPNet, 0, len(orgData.Prefixes))
 		for _, prefixStr := range orgData.Prefixes {
@@ -204,16 +267,36 @@ func (c *Checker) loadASNData(filePath string) {
 			}
 			prefixes = append(prefixes, *ipNet)
 		}
-		c.orgToPrefixes[org] = prefixes
+		orgToPrefixes[org] = prefixes
 	}
 
-	// 构建域名到org的映射
 	for _, suffix := range asnData.Suffixes {
-		c.domainToOrg[suffix.Suffix] = suffix.Org
+		if suffix.Suffix == "" || suffix.Org == "" {
+			continue
+		}
+		domainToOrg[suffix.Suffix] = suffix.Org
 	}
 
-	// 统计加载结果
-	logger.Infof("加载ASN数据成功: %d个域名映射, %d个组织IP段", len(c.domainToOrg), len(c.orgToPrefixes))
+	if len(domainToOrg) == 0 {
+		return fmt.Errorf("有效 suffix 映射为空")
+	}
+
+	c.asnMu.Lock()
+	c.domainToOrg = domainToOrg
+	c.orgToPrefixes = orgToPrefixes
+	c.asnMu.Unlock()
+	return nil
+}
+
+// ReloadASN 热重载：重新读取人工文件与 cache 合并文件并合成映射。
+func (c *Checker) ReloadASN() error {
+	if !c.config.ASNEnabled {
+		return nil
+	}
+	if c.asnManualPath == "" {
+		return fmt.Errorf("ASN 人工文件路径未设置")
+	}
+	return c.loadASNComposite(c.asnManualPath, c.asnMergedPath)
 }
 
 // getOrgByDomain 根据域名获取对应的org
@@ -269,6 +352,33 @@ func (c *Checker) CheckIPInOrgPrefixes(domain string, ip net.IP) bool {
 	}
 
 	return c.isIPInOrgPrefixes(ip, org)
+}
+
+// resolveIPToDomain 反向查询IP对应的域名
+func (c *Checker) resolveIPToDomain(ip net.IP) string {
+	reverseAddr, err := dns.ReverseAddr(ip.String())
+	if err != nil {
+		return ""
+	}
+
+	msg := new(dns.Msg)
+	msg.SetQuestion(reverseAddr, dns.TypePTR)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	r, _, err := c.dnsClient.ExchangeContext(ctx, msg, "8.8.8.8:53")
+	if err != nil {
+		return ""
+	}
+
+	if len(r.Answer) > 0 {
+		if ptr, ok := r.Answer[0].(*dns.PTR); ok {
+			return strings.TrimSuffix(ptr.Ptr, ".")
+		}
+	}
+
+	return ""
 }
 
 // getFromCache 从缓存获取结果
@@ -584,9 +694,16 @@ func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckRes
 		}
 	}
 
+	// 反向查询IP对应的域名
+	tlsDomain := domain
+	if resolvedDomain := c.resolveIPToDomain(ip); resolvedDomain != "" {
+		tlsDomain = resolvedDomain
+		logger.Printf("[TLS DOMAIN] %s -> 使用反向查询域名 %s 进行TLS握手", domain, tlsDomain)
+	}
+
 	// 直接进行TLS握手验证
 	conf := &tls.Config{
-		ServerName:         domain,
+		ServerName:         tlsDomain,
 		InsecureSkipVerify: true, // 跳过默认验证，使用自定义验证
 		MinVersion:         tls.VersionTLS12,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {

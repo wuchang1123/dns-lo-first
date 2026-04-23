@@ -52,6 +52,10 @@ type PoisonCheckConfig struct {
 	CacheTTL             int    `yaml:"cache_ttl"` // 缓存过期时间（分钟）
 	ASNEnabled           bool   `yaml:"asn_enabled"`
 	ASNFilePath          string `yaml:"asn_file_path"`
+	// ASNMergeIntervalHours 多源合并定时间隔（小时）；启动时仅当 cache 下合并文件不存在才自动合并一次，0 表示不轮询（可手动 asn-merge）
+	ASNMergeIntervalHours int `yaml:"asn_merge_interval_hours"`
+	// ASNMergeAppleRIPE 为 true 时将 RIPE 公布的 AS714 前缀并入 apple（列表可能很长）
+	ASNMergeAppleRIPE bool `yaml:"asn_merge_apple_ripe"`
 }
 
 // GetLogLevel 将字符串日志等级转换为logger包中的等级常量

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"lo-dns/internal/asnmerge"
 	"lo-dns/internal/config"
 	"lo-dns/internal/domain"
 	"lo-dns/internal/logger"
@@ -136,20 +137,18 @@ func main() {
 	// 创建判毒检查器
 	poisonChecker := poison.NewChecker(cfg.PoisonCheck, upstreamMgr, cfg.BaseDir, cfg.Server.CachePath)
 
-	// 输出ASN文件路径
-	asnFilePath := cfg.PoisonCheck.ASNFilePath
-	if !filepath.IsAbs(asnFilePath) {
-		asnFilePath = filepath.Join(cfg.BaseDir, asnFilePath)
-	}
 	if cfg.PoisonCheck.ASNEnabled {
-		logger.Printf("ASN文件路径: %s", asnFilePath)
+		manual := asnmerge.ResolvePath(cfg.BaseDir, cfg.PoisonCheck.ASNFilePath)
+		merged := asnmerge.MergedASNPath(cfg.BaseDir, cfg.Server.CachePath)
+		logger.Printf("ASN 人工配置: %s", manual)
+		logger.Printf("ASN 合并缓存(前缀优先): %s", merged)
 	}
 
 	// 创建DNS服务器
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)
 
 	// 创建更新器
-	updater := updater.NewUpdater(domainMgr, cfg)
+	updater := updater.NewUpdater(domainMgr, poisonChecker, cfg)
 
 	// 如果仅更新数据
 	if *updateOnly {

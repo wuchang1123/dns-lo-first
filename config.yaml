@@ -67,5 +67,9 @@ poison_check:
   cache_ttl: 32
   # 是否启用ASN判断
   asn_enabled: true
-  # ASN数据文件路径
+  # 人工维护的 ASN 配置（域名后缀→组织、可选静态前缀）；程序启动时必读
   asn_file_path: "./data/domain_asn.json"
+  # 多源合并：启动时仅当 cache/domain_asn.merged.json 不存在才自动合并；本项为定时间隔（小时），0 表示不轮询（可 go run ./cmd/asn-merge）
+  asn_merge_interval_hours: 0
+  # true 时额外合并 RIPE AS714 到 apple（前缀可能非常多）
+  asn_merge_apple_ripe: false

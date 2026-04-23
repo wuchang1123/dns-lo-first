@@ -39,6 +39,20 @@
       "prefixes": [
         "17.0.0.0/8"
       ]
+    },
+    "microsoft": {
+      "prefixes": [
+        "20.0.0.0/8",
+        "40.0.0.0/8",
+        "104.0.0.0/8",
+        "13.64.0.0/10",
+        "52.0.0.0/8",
+        "131.253.0.0/16",
+        "134.170.0.0/16",
+        "150.171.0.0/16",
+        "204.79.0.0/16",
+        "23.96.0.0/8"
+      ]
     }
   },
   "suffixes": [
@@ -63,6 +77,16 @@
     { "suffix": "cdn-apple.com", "org": "apple" },
     { "suffix": "itunes.com", "org": "apple" },
     { "suffix": "appstore.com", "org": "apple" },
-    { "suffix": "apple.news", "org": "apple" }
+    { "suffix": "apple.news", "org": "apple" },
+    { "suffix": "microsoft.com", "org": "microsoft" },
+    { "suffix": "microsoftonline.com", "org": "microsoft" },
+    { "suffix": "office.com", "org": "microsoft" },
+    { "suffix": "live.com", "org": "microsoft" },
+    { "suffix": "outlook.com", "org": "microsoft" },
+    { "suffix": "skype.com", "org": "microsoft" },
+    { "suffix": "msedge.net", "org": "microsoft" },
+    { "suffix": "azure.com", "org": "microsoft" },
+    { "suffix": "windows.com", "org": "microsoft" },
+    { "suffix": "xbox.com", "org": "microsoft" }
   ]
 }

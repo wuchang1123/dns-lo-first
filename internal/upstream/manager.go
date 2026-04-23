@@ -21,11 +21,12 @@ const (
 
 // Result 查询结果
 type Result struct {
-	Response *dns.Msg
-	Server   string
-	Type     ServerType
-	Err      error
-	Duration time.Duration
+	Response  *dns.Msg
+	Server    string
+	Type      ServerType
+	Err       error
+	Duration  time.Duration
+	Timestamp time.Time
 }
 
 // Manager 上游服务器管理器
@@ -34,6 +35,11 @@ type Manager struct {
 	overseasServers []string
 	client          *dns.Client
 	timeout         time.Duration
+
+	// 本地DNS缓存
+	localCache    map[string]*Result
+	localCacheMu  sync.RWMutex
+	localCacheTTL time.Duration
 }
 
 // NewManager 创建上游管理器
@@ -45,13 +51,32 @@ func NewManager(local, overseas []string) *Manager {
 			Net:     "udp",
 			Timeout: 5 * time.Second,
 		},
-		timeout: 5 * time.Second,
+		timeout:       5 * time.Second,
+		localCache:    make(map[string]*Result),
+		localCacheTTL: 60 * time.Second, // 默认缓存60秒
 	}
 }
 
 // QueryLocal 查询本地DNS
 func (m *Manager) QueryLocal(ctx context.Context, msg *dns.Msg) *Result {
-	return m.queryServers(ctx, msg, m.localServers, LocalServer)
+	// 生成缓存键
+	cacheKey := m.generateCacheKey(msg)
+
+	// 检查缓存
+	if result := m.getFromCache(cacheKey); result != nil {
+		logger.Printf("[CACHE HIT] %s -> 从本地DNS缓存返回", cacheKey)
+		return result
+	}
+
+	// 执行查询
+	result := m.queryServers(ctx, msg, m.localServers, LocalServer)
+
+	// 存入缓存
+	if result.Err == nil && result.Response != nil {
+		m.saveToCache(cacheKey, result)
+	}
+
+	return result
 }
 
 // QueryOverseas 查询海外DNS
@@ -156,33 +181,37 @@ func (m *Manager) querySingle(ctx context.Context, msg *dns.Msg, server string, 
 	select {
 	case <-queryCtx.Done():
 		return &Result{
-			Err:      queryCtx.Err(),
-			Server:   server,
-			Type:     serverType,
-			Duration: time.Since(start),
+			Err:       queryCtx.Err(),
+			Server:    server,
+			Type:      serverType,
+			Duration:  time.Since(start),
+			Timestamp: time.Now(),
 		}
 	case err := <-errChan:
 		return &Result{
-			Err:      err,
-			Server:   server,
-			Type:     serverType,
-			Duration: time.Since(start),
+			Err:       err,
+			Server:    server,
+			Type:      serverType,
+			Duration:  time.Since(start),
+			Timestamp: time.Now(),
 		}
 	case r := <-respChan:
 		// 检查DNS响应代码
 		if r.Rcode != dns.RcodeSuccess {
 			return &Result{
-				Err:      fmt.Errorf("DNS response error: %s", dns.RcodeToString[r.Rcode]),
-				Server:   server,
-				Type:     serverType,
-				Duration: time.Since(start),
+				Err:       fmt.Errorf("DNS response error: %s", dns.RcodeToString[r.Rcode]),
+				Server:    server,
+				Type:      serverType,
+				Duration:  time.Since(start),
+				Timestamp: time.Now(),
 			}
 		}
 		return &Result{
-			Response: r,
-			Server:   server,
-			Type:     serverType,
-			Duration: time.Since(start),
+			Response:  r,
+			Server:    server,
+			Type:      serverType,
+			Duration:  time.Since(start),
+			Timestamp: time.Now(),
 		}
 	}
 }
@@ -207,4 +236,51 @@ func (m *Manager) GetLocalServers() []string {
 // GetOverseasServers 获取海外服务器列表
 func (m *Manager) GetOverseasServers() []string {
 	return m.overseasServers
+}
+
+// generateCacheKey 生成缓存键
+func (m *Manager) generateCacheKey(msg *dns.Msg) string {
+	if len(msg.Question) > 0 {
+		q := msg.Question[0]
+		return fmt.Sprintf("%s|%d|%d", q.Name, q.Qtype, q.Qclass)
+	}
+	return fmt.Sprintf("%v", msg)
+}
+
+// getFromCache 从缓存获取结果
+func (m *Manager) getFromCache(key string) *Result {
+	m.localCacheMu.RLock()
+	defer m.localCacheMu.RUnlock()
+
+	result, exists := m.localCache[key]
+	if !exists {
+		return nil
+	}
+
+	// 检查缓存是否过期
+	if time.Since(result.Timestamp) > m.localCacheTTL {
+		return nil
+	}
+
+	return result
+}
+
+// saveToCache 保存结果到缓存
+func (m *Manager) saveToCache(key string, result *Result) {
+	m.localCacheMu.Lock()
+	defer m.localCacheMu.Unlock()
+
+	m.localCache[key] = result
+
+	// 限制缓存大小，防止内存泄漏
+	if len(m.localCache) > 10000 {
+		// 简单清理：保留最新的5000个
+		count := 0
+		for k := range m.localCache {
+			if count >= 5000 {
+				delete(m.localCache, k)
+			}
+			count++
+		}
+	}
 }
