@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +28,7 @@ type Server struct {
 	poisonChecker  *poison.Checker
 	pendingQueries map[string]*pendingQuery
 	pendingMu      sync.Mutex
+	cachePath      string
 }
 
 // pendingQuery 待处理查询
@@ -38,12 +41,24 @@ type pendingQuery struct {
 
 // NewServer 创建DNS服务器
 func NewServer(cfg *config.Config, upstreamMgr *upstream.Manager, domainMgr *domain.Manager, poisonChecker *poison.Checker) *Server {
+	// 确定缓存路径
+	cachePath := cfg.Server.CachePath
+	if !filepath.IsAbs(cachePath) {
+		cachePath = filepath.Join(cfg.BaseDir, cachePath)
+	}
+
+	// 确保缓存目录存在
+	if err := os.MkdirAll(cachePath, 0755); err != nil {
+		logger.Printf("[ERROR] 创建缓存目录失败: %v", err)
+	}
+
 	return &Server{
 		config:         cfg,
 		upstreamMgr:    upstreamMgr,
 		domainMgr:      domainMgr,
 		poisonChecker:  poisonChecker,
 		pendingQueries: make(map[string]*pendingQuery),
+		cachePath:      cachePath,
 	}
 }
 
@@ -69,6 +84,8 @@ func (s *Server) Start() error {
 // ServeDNS 处理DNS请求
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	start := time.Now()
+	ipSource := "unknown"
+	responseIPs := []string{}
 
 	if len(r.Question) == 0 || r.Question[0].Qtype != dns.TypeA {
 		dns.HandleFailed(w, r)
@@ -77,15 +94,50 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
+	// 检查是否为overpass域名（直接跳过本地DNS查询）
+	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
+	if !isOverpassDomain {
+		// 检查是否为本地域名
+		isLocalDomain := s.domainMgr.IsLocalDomain(domain)
+
+		if isLocalDomain {
+			// 对于本地域名，先尝试本地DNS缓存
+			localResult := s.upstreamMgr.QueryLocal(context.Background(), r)
+			if localResult.Err == nil && localResult.Response != nil {
+				logger.Printf("[LOCAL CACHE] %s -> 从本地DNS缓存返回", domain)
+				resp := localResult.Response.Copy()
+				resp.Id = r.Id
+				// 提取响应IP
+				responseIPs = extractIPsToString(resp)
+				ipSource = "local_cache"
+				if err := w.WriteMsg(resp); err != nil {
+					logger.Printf("[LOCAL CACHE] %s -> 缓存响应写入失败: %v", domain, err)
+				}
+				// 记录查询时间
+				queryTime := time.Since(start)
+				logger.Printf("[QUERY OK] %s -> 响应 1 个等待者，耗时 %v", domain, queryTime)
+				s.recordQueryTime(domain, queryTime, ipSource, responseIPs)
+				return
+			}
+		}
+	}
+
 	// 优先从TLS验证缓存获取passed IPs（统一缓存策略）
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache {
-		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 60)
+		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 300)
 		resp.Id = r.Id
+		// 提取响应IP
+		responseIPs = extractIPsToString(resp)
+		ipSource = "tls_cache"
 		logger.Printf("[CACHE HIT] %s -> 从TLS缓存返回 %d 个IP", domain, len(passedIPs))
 		if err := w.WriteMsg(resp); err != nil {
 			logger.Printf("[CACHE] %s -> 缓存响应写入失败: %v", domain, err)
 		}
+		// 记录查询时间
+		queryTime := time.Since(start)
+		logger.Printf("[QUERY OK] %s -> 响应 1 个等待者，耗时 %v", domain, queryTime)
+		s.recordQueryTime(domain, queryTime, ipSource, responseIPs)
 		return
 	}
 
@@ -109,11 +161,10 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	var response *dns.Msg
 	var err error
 
-	// 检查是否为overpass域名（直接跳过本地DNS查询）
-	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
 	if isOverpassDomain {
 		logger.Printf("[OVERPASS DOMAIN] %s -> 直接使用海外DNS", domain)
 		response, err = s.queryOverseasOnly(r)
+		ipSource = "overseas_upstream"
 	} else {
 		// 检查是否为本地域名
 		isLocalDomain := s.domainMgr.IsLocalDomain(domain)
@@ -121,8 +172,34 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		if isLocalDomain {
 			logger.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
 			response, err = s.queryLocalOnly(r)
+			ipSource = "local_upstream"
 		} else {
 			response, err = s.queryWithPoisonCheck(r, domain)
+			// 根据响应结果设置ipSource
+			if err == nil && response != nil {
+				// 检查是否为ASN通过的响应
+				if len(response.Answer) > 0 {
+					for _, answer := range response.Answer {
+						if a, ok := answer.(*dns.A); ok {
+							// 检查IP是否在组织IP段内
+							if s.poisonChecker.CheckIPInOrgPrefixes(domain, a.A) {
+								ipSource = "asn_pass"
+								break
+							}
+						}
+					}
+				}
+				// 如果不是ASN通过，则根据响应来源设置
+				if ipSource == "unknown" {
+					// 检查是否有本地DNS响应
+					localResult := s.upstreamMgr.QueryLocal(context.Background(), r)
+					if localResult.Err == nil && localResult.Response != nil {
+						ipSource = "local_upstream"
+					} else {
+						ipSource = "overseas_upstream"
+					}
+				}
+			}
 		}
 	}
 
@@ -144,11 +221,56 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		} else {
 			resp := pending.result.Copy()
 			resp.Id = r.Id
+			// 提取响应IP
+			if len(responseIPs) == 0 {
+				responseIPs = extractIPsToString(resp)
+			}
 			waiter.WriteMsg(resp)
 		}
 	}
 
-	logger.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), time.Since(start))
+	queryTime := time.Since(start)
+	logger.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), queryTime)
+
+	// 记录查询时间
+	s.recordQueryTime(domain, queryTime, ipSource, responseIPs)
+}
+
+// recordQueryTime 记录DNS查询时间到cache目录
+func (s *Server) recordQueryTime(domain string, queryTime time.Duration, ipSource string, responseIPs []string) {
+	go func() {
+		// 生成日志文件路径：cache/query_times_YYYY-MM-DD.txt
+		logFileName := fmt.Sprintf("query_times_%s.txt", time.Now().Format("2006-01-02"))
+		logFilePath := filepath.Join(s.cachePath, logFileName)
+
+		// 记录格式：时间戳 域名 耗时(ms) 来源 IP列表
+		ips := strings.Join(responseIPs, ",")
+		logEntry := fmt.Sprintf("%s %s %d %s %s\n", time.Now().Format("2006-01-02 15:04:05"), domain, queryTime.Milliseconds(), ipSource, ips)
+
+		// 以追加模式打开文件
+		file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			logger.Printf("[ERROR] 打开查询时间日志文件失败: %v", err)
+			return
+		}
+		defer file.Close()
+
+		// 写入日志
+		if _, err := file.WriteString(logEntry); err != nil {
+			logger.Printf("[ERROR] 记录查询时间失败: %v", err)
+		}
+	}()
+}
+
+// extractIPsToString 从DNS响应中提取IP列表为字符串切片
+func extractIPsToString(msg *dns.Msg) []string {
+	var ips []string
+	for _, rr := range msg.Answer {
+		if a, ok := rr.(*dns.A); ok {
+			ips = append(ips, a.A.String())
+		}
+	}
+	return ips
 }
 
 // queryLocalOnly 只查询本地DNS
@@ -169,7 +291,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache {
 		// 构建响应消息
-		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 60)
+		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 300)
 
 		// 后台运行完整的查询和验证流程，更新缓存
 		go func() {
@@ -417,13 +539,13 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						domain, len(ips), ipsStr, checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 					if !checkResult.Passed {
-						// 验证失败，直接返回，TTL为1
+						// 验证失败，直接返回，TTL为3
 						logger.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，但是ttl设置为1", domain)
-						// 基于原始海外响应创建响应，修改TTL为1
+						// 基于原始海外响应创建响应，修改TTL为3
 						resp := overseasResult.Response.Copy()
 						// 确保TTL为1
 						for _, answer := range resp.Answer {
-							answer.Header().Ttl = 1
+							answer.Header().Ttl = 3
 						}
 						return resp, nil
 					}

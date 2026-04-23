@@ -57,18 +57,55 @@ func NewManager(local, overseas []string) *Manager {
 	}
 }
 
-// QueryLocal 查询本地DNS
+// QueryLocal 查询本地DNS（乐观缓存：过期也返回，后台更新）
 func (m *Manager) QueryLocal(ctx context.Context, msg *dns.Msg) *Result {
 	// 生成缓存键
 	cacheKey := m.generateCacheKey(msg)
 
 	// 检查缓存
 	if result := m.getFromCache(cacheKey); result != nil {
-		logger.Printf("[CACHE HIT] %s -> 从本地DNS缓存返回", cacheKey)
+		// 检查缓存是否过期
+		if time.Since(result.Timestamp) > m.localCacheTTL {
+			// 缓存过期，先返回缓存结果，TTL设置为3，后台更新
+			logger.Printf("[CACHE HIT] %s -> 从本地DNS缓存返回（过期，TTL=3，后台更新）", cacheKey)
+			// 复制响应并修改TTL
+			if result.Response != nil {
+				respCopy := result.Response.Copy()
+				// 修改所有Answer的TTL为3
+				for _, answer := range respCopy.Answer {
+					answer.Header().Ttl = 3
+				}
+				// 创建新的结果对象
+				result = &Result{
+					Response:  respCopy,
+					Server:    result.Server,
+					Type:      result.Type,
+					Err:       result.Err,
+					Duration:  result.Duration,
+					Timestamp: result.Timestamp,
+				}
+			}
+			// 后台执行新的查询并更新缓存
+			go func() {
+				// 创建新的上下文，避免原上下文被取消
+				bgCtx, cancel := context.WithTimeout(context.Background(), m.timeout)
+				defer cancel()
+				// 执行查询
+				newResult := m.queryServers(bgCtx, msg, m.localServers, LocalServer)
+				// 更新缓存
+				if newResult.Err == nil && newResult.Response != nil {
+					m.saveToCache(cacheKey, newResult)
+					logger.Printf("[CACHE UPDATE] %s -> 本地DNS缓存已更新", cacheKey)
+				}
+			}()
+		} else {
+			// 缓存未过期，直接返回
+			logger.Printf("[CACHE HIT] %s -> 从本地DNS缓存返回", cacheKey)
+		}
 		return result
 	}
 
-	// 执行查询
+	// 缓存未命中，执行查询
 	result := m.queryServers(ctx, msg, m.localServers, LocalServer)
 
 	// 存入缓存
@@ -247,7 +284,7 @@ func (m *Manager) generateCacheKey(msg *dns.Msg) string {
 	return fmt.Sprintf("%v", msg)
 }
 
-// getFromCache 从缓存获取结果
+// getFromCache 从缓存获取结果（乐观缓存：过期也返回，后台更新）
 func (m *Manager) getFromCache(key string) *Result {
 	m.localCacheMu.RLock()
 	defer m.localCacheMu.RUnlock()
@@ -257,11 +294,8 @@ func (m *Manager) getFromCache(key string) *Result {
 		return nil
 	}
 
-	// 检查缓存是否过期
-	if time.Since(result.Timestamp) > m.localCacheTTL {
-		return nil
-	}
-
+	// 乐观缓存：即使过期也返回，后台更新
+	// 不再检查缓存是否过期，直接返回
 	return result
 }
 

@@ -53,6 +53,15 @@
         "204.79.0.0/16",
         "23.96.0.0/8"
       ]
+    },
+    "akamai": {
+      "prefixes": [
+        "23.0.0.0/8",
+        "2.16.0.0/13",
+        "104.100.0.0/14",
+        "184.50.0.0/15",
+        "184.84.0.0/14"
+      ]
     }
   },
   "suffixes": [
@@ -87,6 +96,13 @@
     { "suffix": "msedge.net", "org": "microsoft" },
     { "suffix": "azure.com", "org": "microsoft" },
     { "suffix": "windows.com", "org": "microsoft" },
-    { "suffix": "xbox.com", "org": "microsoft" }
+    { "suffix": "xbox.com", "org": "microsoft" },
+    { "suffix": "msftconnecttest.com", "org": "microsoft" },
+    { "suffix": "akamai.com", "org": "akamai" },
+    { "suffix": "akamaihd.net", "org": "akamai" },
+    { "suffix": "akamaized.net", "org": "akamai" },
+    { "suffix": "edgekey.net", "org": "akamai" },
+    { "suffix": "edgesuite.net", "org": "akamai" },
+    { "suffix": "akadns.net", "org": "akamai" }
   ]
 }

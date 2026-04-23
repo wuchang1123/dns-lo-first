@@ -112,6 +112,9 @@ func Merge(ctx context.Context, opts Options) (*Report, error) {
 		{"microsoft", "ripe_as8075", func(c context.Context, cl *http.Client) ([]string, error) {
 			return fetchRIPEAnnounced(c, cl, "8075")
 		}, true},
+		{"akamai", "ripe_as12222", func(c context.Context, cl *http.Client) ([]string, error) {
+			return fetchRIPEAnnounced(c, cl, "12222")
+		}, true},
 	}
 	if opts.MergeAppleRIPE {
 		fetches = append(fetches, fetch{"apple", "ripe_as714", func(c context.Context, cl *http.Client) ([]string, error) {
@@ -132,6 +135,13 @@ func Merge(ctx context.Context, opts Options) (*Report, error) {
 				prefixes = p2
 				err = nil
 				report.PerSource["bgpview_as8075_fallback"] = sourceMeta{OK: true, Count: len(p2), Detail: "used when ripe_as8075 failed"}
+			}
+		}
+		if err != nil && f.org == "akamai" {
+			if p2, e2 := fetchBGPViewASNPrefixes(ctx, client, "12222"); e2 == nil && len(p2) > 0 {
+				prefixes = p2
+				err = nil
+				report.PerSource["bgpview_as12222_fallback"] = sourceMeta{OK: true, Count: len(p2), Detail: "used when ripe_as12222 failed"}
 			}
 		}
 		if err != nil {
