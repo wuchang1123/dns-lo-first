@@ -76,6 +76,8 @@ poison_check:
   asn_enabled: true
   # 人工维护的 ASN 配置（域名后缀→组织、可选静态前缀）；程序启动时必读
   asn_file_path: "./data/domain_asn.json"
+  # 常见受限/测试域名列表（一行一域，# 为注释）。example.com 表示 apex+所有子域；*.example.com 表示仅子域（不含 apex，RFC 4592）。相对路径相对于 base_dir。非空时仅列表命中项做 TLS 判毒，其余视为通过。留空则对所有域名判毒。
+  common_blocked_domains_path: "./data/common_blocked_domains.txt"
   # 多源合并：启动时仅当 cache/domain_asn.merged.json 不存在才自动合并；本项为定时间隔（小时），0 表示不轮询（可 go run ./cmd/asn-merge）
   asn_merge_interval_hours: 0
   # true 时额外合并 RIPE AS714 到 apple（前缀可能非常多）

@@ -94,6 +94,18 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
 
+	// 清理域名，移除http://或https://前缀
+	if strings.HasPrefix(domain, "http://") {
+		domain = strings.TrimPrefix(domain, "http://")
+	} else if strings.HasPrefix(domain, "https://") {
+		domain = strings.TrimPrefix(domain, "https://")
+	}
+
+	// 移除路径部分
+	if idx := strings.Index(domain, "/"); idx != -1 {
+		domain = domain[:idx]
+	}
+
 	// 检查是否为overpass域名（直接跳过本地DNS查询）
 	isOverpassDomain := s.domainMgr.IsOverpassDomain(domain)
 	if !isOverpassDomain {
@@ -286,6 +298,18 @@ func (s *Server) queryLocalOnly(r *dns.Msg) (*dns.Msg, error) {
 func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 	// 提取域名
 	domain := strings.TrimSuffix(r.Question[0].Name, ".")
+
+	// 清理域名，移除http://或https://前缀
+	if strings.HasPrefix(domain, "http://") {
+		domain = strings.TrimPrefix(domain, "http://")
+	} else if strings.HasPrefix(domain, "https://") {
+		domain = strings.TrimPrefix(domain, "https://")
+	}
+
+	// 移除路径部分
+	if idx := strings.Index(domain, "/"); idx != -1 {
+		domain = domain[:idx]
+	}
 
 	// 乐观缓存策略：先检查TLS验证缓存是否有通过的IP
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
