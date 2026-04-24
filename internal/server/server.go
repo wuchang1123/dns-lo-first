@@ -278,7 +278,29 @@ func extractIPsToString(msg *dns.Msg) []string {
 
 // queryLocalOnly 只查询本地DNS
 func (s *Server) queryLocalOnly(r *dns.Msg) (*dns.Msg, error) {
-	result := s.upstreamMgr.QueryLocal(context.Background(), r)
+	// 提取域名
+	domain := strings.TrimSuffix(r.Question[0].Name, ".")
+
+	// 清理域名，移除http://或https://前缀
+	if strings.HasPrefix(domain, "http://") {
+		domain = strings.TrimPrefix(domain, "http://")
+	} else if strings.HasPrefix(domain, "https://") {
+		domain = strings.TrimPrefix(domain, "https://")
+	}
+
+	// 移除路径部分
+	if idx := strings.Index(domain, "/"); idx != -1 {
+		domain = domain[:idx]
+	}
+
+	// 创建新的DNS请求消息，使用清理后的域名
+	cleanMsg := &dns.Msg{
+		Question: []dns.Question{
+			{Name: domain + ".", Qtype: r.Question[0].Qtype, Qclass: r.Question[0].Qclass},
+		},
+	}
+
+	result := s.upstreamMgr.QueryLocal(context.Background(), cleanMsg)
 	if result.Err != nil {
 		return nil, result.Err
 	}
@@ -302,6 +324,13 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 		domain = domain[:idx]
 	}
 
+	// 创建新的DNS请求消息，使用清理后的域名
+	cleanMsg := &dns.Msg{
+		Question: []dns.Question{
+			{Name: domain + ".", Qtype: r.Question[0].Qtype, Qclass: r.Question[0].Qclass},
+		},
+	}
+
 	// 乐观缓存策略：先检查TLS验证缓存是否有通过的IP
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache && len(passedIPs) > 0 {
@@ -310,7 +339,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 
 		// 后台运行完整的查询和验证流程，更新缓存
 		go func() {
-			result := s.upstreamMgr.QueryOverseas(context.Background(), r)
+			result := s.upstreamMgr.QueryOverseas(context.Background(), cleanMsg)
 			if result.Err != nil {
 				logger.Printf("[OVERPASS BACKGROUND] %s -> 查询失败: %v", domain, result.Err)
 				return
@@ -326,7 +355,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 	}
 
 	// 缓存未命中，执行正常查询流程
-	result := s.upstreamMgr.QueryOverseas(context.Background(), r)
+	result := s.upstreamMgr.QueryOverseas(context.Background(), cleanMsg)
 	if result.Err != nil {
 		return nil, result.Err
 	}
@@ -359,6 +388,13 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 
 // queryWithPoisonCheck 使用判毒系统查询
 func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, string, error) {
+	// 创建新的DNS请求消息，使用清理后的域名
+	cleanMsg := &dns.Msg{
+		Question: []dns.Question{
+			{Name: domain + ".", Qtype: r.Question[0].Qtype, Qclass: r.Question[0].Qclass},
+		},
+	}
+
 	// 先检查缓存是否有通过的IP（乐观缓存策略）
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache && len(passedIPs) > 0 {
@@ -378,11 +414,11 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, stri
 			overseasChan := make(chan *upstream.Result, 1)
 
 			go func() {
-				localChan <- s.upstreamMgr.QueryLocal(ctx, r)
+				localChan <- s.upstreamMgr.QueryLocal(ctx, cleanMsg)
 			}()
 
 			go func() {
-				overseasChan <- s.upstreamMgr.QueryOverseas(ctx, r)
+				overseasChan <- s.upstreamMgr.QueryOverseas(ctx, cleanMsg)
 			}()
 
 			var localResult, overseasResult *upstream.Result
@@ -423,11 +459,11 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, stri
 	overseasChan := make(chan *upstream.Result, 1)
 
 	go func() {
-		localChan <- s.upstreamMgr.QueryLocal(ctx, r)
+		localChan <- s.upstreamMgr.QueryLocal(ctx, cleanMsg)
 	}()
 
 	go func() {
-		overseasChan <- s.upstreamMgr.QueryOverseas(ctx, r)
+		overseasChan <- s.upstreamMgr.QueryOverseas(ctx, cleanMsg)
 	}()
 
 	var localResult, overseasResult *upstream.Result
