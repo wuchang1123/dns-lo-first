@@ -72,7 +72,7 @@ poison_check:
   # 是否启用ASN判断
   asn_enabled: true
   # 人工维护的 ASN 配置（域名后缀→组织、可选静态前缀）；程序启动时必读
-  asn_file_path: "./data/domain_asn.json"
+  asn_file_path: "./data/domain_asn.yaml"
   # 判毒白名单（checklist）。非空时仅对命中项做判毒，其余域名直接视为通过；留空则对所有域名判毒。
   # apex+子域；*.example.com 仅子域（RFC 4592）。skip_tls_verify_domains 优先级更高。
   # checklist:

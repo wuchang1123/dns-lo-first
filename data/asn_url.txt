@@ -1,4 +1,4 @@
-@data/domain_asn.json 增加 github.com 对应的组织和IP段，过滤IPv6
+@data/domain_asn.yaml 增加 github.com 对应的组织和IP段，过滤IPv6
 
 
 
