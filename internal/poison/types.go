@@ -44,9 +44,14 @@ type Checker struct {
 	asnManualPath string
 	asnMergedPath string
 
-	// skip_tls_verify：命中则跳过 TLS 与 ASN 前缀校验
+	// skip_tls_verify：命中则跳过 TLS 与 ASN 前缀校验（优先于 checklist）
 	tlsSkipVerifySet          map[string]struct{}
 	tlsSkipVerifyWildcardOnly map[string]struct{}
+
+	// checklist 判毒白名单：非空(checklistEnabled=true)时仅对命中项判毒
+	checklistEnabled      bool
+	checklistSet          map[string]struct{}
+	checklistWildcardOnly map[string]struct{}
 }
 
 // CheckResult 检查结果

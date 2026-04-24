@@ -11,12 +11,12 @@ import (
 
 // Config 总配置结构
 type Config struct {
-	BaseDir      string             `yaml:"base_dir"`
-	Server       ServerConfig       `yaml:"server"`
-	Upstream     UpstreamConfig     `yaml:"upstream"`
+	BaseDir  string         `yaml:"base_dir"`
+	Server   ServerConfig   `yaml:"server"`
+	Upstream UpstreamConfig `yaml:"upstream"`
 	// BootstrapDNS HTTP 下载（所在国列表、ASN 合并等）解析 HTTPS 时使用的递归 DNS，形如 "223.5.5.5:53"。
 	// 启动阶段本机可能尚无可用 DNS，不宜依赖系统 resolv。非空时仅使用本列表；为空则从 upstream 取非回环地址，再兜底公共 DNS。
-	BootstrapDNS []string `yaml:"bootstrap_dns"`
+	BootstrapDNS []string           `yaml:"bootstrap_dns"`
 	LocalDomains LocalDomainsConfig `yaml:"local_domains"`
 	PoisonCheck  PoisonCheckConfig  `yaml:"poison_check"`
 }
@@ -56,6 +56,12 @@ type PoisonCheckConfig struct {
 	CacheTTL             int    `yaml:"cache_ttl"` // 缓存过期时间（分钟）
 	ASNEnabled           bool   `yaml:"asn_enabled"`
 	ASNFilePath          string `yaml:"asn_file_path"`
+	// Checklist 判毒白名单（配置内联）。非空时仅对列表命中的域名/子域名做判毒，其余域名直接视为通过；留空则对所有域名判毒。
+	// 匹配规则：apex 及任意子域；行首 *.example.com 仅匹配严格子域（RFC 4592）。
+	// 与 skip_tls_verify_domains 的关系：skip 列表优先，即便在 checklist 内，若同时在 skip 列表内也会跳过判毒。
+	Checklist []string `yaml:"checklist"`
+	// ChecklistPath 同上列表的文件路径（纯文本，一行一域，# 注释），相对 base_dir；与 checklist 合并。
+	ChecklistPath string `yaml:"checklist_path"`
 	// SkipTLSVerifyDomains 不做 TLS 证书判毒的域名（配置内联）。一行一域：apex 及任意子域；行首 *.example.com 仅匹配严格子域（RFC 4592）。适用于无 HTTPS 或信任无污染的场景；命中时跳过 TLS 与 ASN 前缀校验。
 	SkipTLSVerifyDomains []string `yaml:"skip_tls_verify_domains"`
 	// SkipTLSVerifyDomainsPath 同上列表的文件路径（纯文本），相对 base_dir；与 skip_tls_verify_domains 合并。

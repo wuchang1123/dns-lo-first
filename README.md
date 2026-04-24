@@ -137,11 +137,20 @@ local_domains:
 
 poison_check:
   enabled: true
-  tls_timeout: 5         # TLS连接超时（秒）
-  concurrent_checks: 10  # 并发校验数量
-  tls_port: 443          # 校验端口
+  tls_timeout: 5              # TLS连接超时（秒）
+  concurrent_checks: 10       # 并发校验数量
+  tls_port: 443               # 校验端口
   cache_refresh_interval: 60  # 缓存刷新间隔（分钟），0表示禁用
-  cache_ttl: 30          # 缓存过期时间（分钟）
+  cache_ttl: 30               # 缓存过期时间（分钟）
+  # 判毒白名单：非空时仅对命中项做判毒，其余直接通过；留空则对所有域名判毒
+  # checklist:
+  #   - "google.com"
+  #   - "*.googlevideo.com"
+  # checklist_path: "./data/checklist.txt"
+  # 跳过 TLS 证书判毒（无 HTTPS 或信任无污染时）；优先级高于 checklist
+  skip_tls_verify_domains:
+    - "ntp.org"
+  # skip_tls_verify_domains_path: "./data/skip_tls_verify_domains.txt"
 ```
 
 ### 配置说明
@@ -152,6 +161,8 @@ poison_check:
 | `server.log_timezone` | 日志时区，如 `Asia/Shanghai`、`America/New_York` |
 | `server.log_level` | 日志等级，可选值：debug, info, warn, error, fatal |
 | `local_domains.overpass` | 域名列表，这些域名直接使用海外DNS，跳过本地DNS查询和判毒检查 |
+| `poison_check.checklist` / `checklist_path` | 判毒白名单（内联 + 文件合并）。非空时仅对命中项判毒，其余直接通过 |
+| `poison_check.skip_tls_verify_domains` / `skip_tls_verify_domains_path` | 跳过 TLS 证书判毒；优先级高于 `checklist`。支持 `*.example.com` 严格子域（RFC 4592） |
 
 ## 使用
 

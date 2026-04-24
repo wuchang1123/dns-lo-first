@@ -154,8 +154,10 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 		domain = msg.Question[0].Name
 	}
 
-	// 并发查询所有服务器，返回第一个成功的结果
+	// 并发查询所有服务器，返回第一个"权威性有效答案"（NOERROR / NXDOMAIN）
+	// 其余 rcode（SERVFAIL/REFUSED/FORMERR/...）视为服务器侧故障，换下一台
 	resultChan := make(chan *Result, len(servers))
+	failChan := make(chan *Result, len(servers))
 	var wg sync.WaitGroup
 
 	for _, server := range servers {
@@ -163,35 +165,77 @@ func (m *Manager) queryServers(ctx context.Context, msg *dns.Msg, servers []stri
 		go func(srv string) {
 			defer wg.Done()
 			result := m.querySingle(ctx, msg, srv, serverType)
-			if result.Err == nil && result.Response != nil && result.Response.Rcode == dns.RcodeSuccess {
+			if isAuthoritativeAnswer(result) {
 				select {
 				case resultChan <- result:
 				default:
 				}
-			} else {
-				// 记录失败的服务器和错误
-				logger.Errorf("[UPSTREAM] %s 服务器 %s 查询 %s 失败: %v", serverTypeToString(serverType), srv, domain, result.Err)
+				return
 			}
+			// 单服务器失败：其他并发查询可能已/即将成功，降级 warn
+			logger.Warnf("[UPSTREAM] %s 服务器 %s 查询 %s 失败: %v", serverTypeToString(serverType), srv, domain, failReason(result))
+			failChan <- result
 		}(server)
 	}
 
-	// 等待所有查询完成或超时
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		close(failChan)
 	}()
 
-	// 获取第一个成功结果
-	for result := range resultChan {
+	if result, ok := <-resultChan; ok {
 		return result
 	}
 
-	// 所有查询都失败，返回最后一个错误
-	logger.Errorf("[UPSTREAM] 所有 %s 服务器查询 %s 均失败", serverTypeToString(serverType), domain)
+	// 所有查询都失败，汇总最后一个错因
+	var lastErr error
+	for r := range failChan {
+		if r == nil {
+			continue
+		}
+		if r.Err != nil {
+			lastErr = r.Err
+		} else if r.Response != nil {
+			lastErr = fmt.Errorf("DNS response error: %s", dns.RcodeToString[r.Response.Rcode])
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("all %s servers failed", serverTypeToString(serverType))
+	}
+	logger.Errorf("[UPSTREAM] 所有 %s 服务器查询 %s 均失败: %v", serverTypeToString(serverType), domain, lastErr)
 	return &Result{
-		Err:  fmt.Errorf("all %s servers failed", serverTypeToString(serverType)),
+		Err:  lastErr,
 		Type: serverType,
 	}
+}
+
+// isAuthoritativeAnswer 判定上游响应是否"权威性最终答案"：
+// NOERROR（含空响应）与 NXDOMAIN 都是合法结论，应直接透传给客户端，
+// 不再重试其他上游。SERVFAIL / REFUSED 等视为服务器侧故障，需要换台。
+func isAuthoritativeAnswer(r *Result) bool {
+	if r == nil || r.Err != nil || r.Response == nil {
+		return false
+	}
+	switch r.Response.Rcode {
+	case dns.RcodeSuccess, dns.RcodeNameError:
+		return true
+	default:
+		return false
+	}
+}
+
+func failReason(r *Result) error {
+	if r == nil {
+		return fmt.Errorf("nil result")
+	}
+	if r.Err != nil {
+		return r.Err
+	}
+	if r.Response != nil {
+		return fmt.Errorf("DNS response error: %s", dns.RcodeToString[r.Response.Rcode])
+	}
+	return fmt.Errorf("unknown error")
 }
 
 // querySingle 查询单个服务器
@@ -233,16 +277,8 @@ func (m *Manager) querySingle(ctx context.Context, msg *dns.Msg, server string, 
 			Timestamp: time.Now(),
 		}
 	case r := <-respChan:
-		// 检查DNS响应代码
-		if r.Rcode != dns.RcodeSuccess {
-			return &Result{
-				Err:       fmt.Errorf("DNS response error: %s", dns.RcodeToString[r.Rcode]),
-				Server:    server,
-				Type:      serverType,
-				Duration:  time.Since(start),
-				Timestamp: time.Now(),
-			}
-		}
+		// 保留 Response（含 Rcode），由上层按 Rcode 分类处理；
+		// 仅真正的传输错误才通过 Err 表达
 		return &Result{
 			Response:  r,
 			Server:    server,

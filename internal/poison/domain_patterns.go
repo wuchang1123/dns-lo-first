@@ -20,8 +20,12 @@ func normalizeDomainForMatch(s string) string {
 }
 
 func appendDomainPatternLine(raw string, explicit, wildcardOnly map[string]struct{}) {
-	line := strings.TrimSpace(raw)
-	if line == "" || strings.HasPrefix(line, "#") {
+	line := strings.TrimRight(raw, "\r")
+	if i := strings.IndexByte(line, '#'); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
 		return
 	}
 	isRFCWildcard := strings.HasPrefix(line, "*.")
@@ -88,4 +92,8 @@ func domainMatchesPatternList(d string, explicit, wildcardOnly map[string]struct
 
 func (c *Checker) domainInSkipTLSVerifyList(domain string) bool {
 	return domainMatchesPatternList(normalizeDomainForMatch(domain), c.tlsSkipVerifySet, c.tlsSkipVerifyWildcardOnly)
+}
+
+func (c *Checker) domainInChecklist(domain string) bool {
+	return domainMatchesPatternList(normalizeDomainForMatch(domain), c.checklistSet, c.checklistWildcardOnly)
 }

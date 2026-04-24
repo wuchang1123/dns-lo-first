@@ -72,6 +72,27 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, bas
 		logger.Infof("TLS 判毒排除列表（跳过证书校验）: %d apex/子树，%d *. 严格子域", len(skipE), len(skipW))
 	}
 
+	checkE := make(map[string]struct{})
+	checkW := make(map[string]struct{})
+	for _, s := range cfg.Checklist {
+		appendDomainPatternLine(s, checkE, checkW)
+	}
+	if strings.TrimSpace(cfg.ChecklistPath) != "" {
+		listPath := config.ResolveDataPath(baseDir, cfg.ChecklistPath)
+		e2, w2, err := loadDomainPatternFile(listPath)
+		if err != nil {
+			logger.Warnf("读取 checklist 失败，将对所有域名判毒: %v", err)
+		} else {
+			mergeDomainPatternMaps(checkE, checkW, e2, w2)
+		}
+	}
+	checker.checklistSet = checkE
+	checker.checklistWildcardOnly = checkW
+	checker.checklistEnabled = len(checkE)+len(checkW) > 0
+	if checker.checklistEnabled {
+		logger.Infof("判毒白名单（checklist）生效: 仅对 %d apex/子树，%d *. 严格子域 做判毒", len(checkE), len(checkW))
+	}
+
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()

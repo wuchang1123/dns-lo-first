@@ -36,6 +36,12 @@ func (c *Checker) Check(domain string, ips []net.IP, source string) *CheckResult
 		return result
 	}
 
+	if c.checklistEnabled && !c.domainInChecklist(domain) {
+		result.Reason = "tls verify skipped (not in checklist)"
+		result.Duration = time.Since(start)
+		return result
+	}
+
 	var wg sync.WaitGroup
 	resultChan := make(chan *tlsCheckResult, len(ips))
 
@@ -80,6 +86,10 @@ func (c *Checker) Check(domain string, ips []net.IP, source string) *CheckResult
 
 func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckResult {
 	if c.domainInSkipTLSVerifyList(domain) {
+		return &tlsCheckResult{ip: ip, success: true}
+	}
+
+	if c.checklistEnabled && !c.domainInChecklist(domain) {
 		return &tlsCheckResult{ip: ip, success: true}
 	}
 
