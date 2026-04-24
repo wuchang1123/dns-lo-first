@@ -185,11 +185,18 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			logger.Printf("[LOCAL DOMAIN] %s -> 使用本地DNS", domain)
 			response, err = s.queryLocalOnly(r)
 			ipSource = "local_upstream"
+			// 提取响应IP
+			if err == nil && response != nil {
+				responseIPs = extractIPsToString(response)
+			}
 		} else {
-			response, responseSource, err := s.queryWithPoisonCheck(r, domain)
+			var responseSource string
+			response, responseSource, err = s.queryWithPoisonCheck(r, domain)
 			// 直接使用 queryWithPoisonCheck 返回的 source
 			if err == nil && response != nil {
 				ipSource = responseSource
+				// 提取响应IP
+				responseIPs = extractIPsToString(response)
 			}
 		}
 	}
@@ -221,7 +228,12 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	queryTime := time.Since(start)
-	logger.Printf("[QUERY OK] %s -> 响应 %d 个等待者，耗时 %v", domain, len(waiters), queryTime)
+	// 格式化IP列表用于日志
+	var ipsStr string
+	if len(responseIPs) > 0 {
+		ipsStr = " -> IPs: [" + strings.Join(responseIPs, ", ") + "]"
+	}
+	logger.Printf("[QUERY OK] %s%s -> 响应 %d 个等待者，耗时 %v", domain, ipsStr, len(waiters), queryTime)
 
 	// 记录查询时间
 	s.recordQueryTime(domain, queryTime, ipSource, responseIPs)
@@ -576,6 +588,12 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, stri
 						}
 					}()
 				}
+			}
+
+			if overseasResult.Response == nil {
+				// 海外DNS查询失败，没有响应
+				logger.Printf("[OVERSEAS FAIL] %s -> 海外DNS查询失败，无响应", domain)
+				return nil, "unknown", fmt.Errorf("overseas DNS returned no response")
 			}
 
 			logger.Printf("[OVERSEAS OK] %s -> 使用海外DNS", domain)
