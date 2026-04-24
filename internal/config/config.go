@@ -56,8 +56,10 @@ type PoisonCheckConfig struct {
 	CacheTTL             int    `yaml:"cache_ttl"` // 缓存过期时间（分钟）
 	ASNEnabled           bool   `yaml:"asn_enabled"`
 	ASNFilePath          string `yaml:"asn_file_path"`
-	// CommonBlockedDomainsPath 常见受限/测试域名列表（纯文本，一行一域，# 开头为注释）。行首 *.example.com 按 RFC 4592 仅匹配其严格子域（不含 apex example.com）；无 * 的行匹配该名及任意子域。非空且文件可读时仅上述集合做 TLS 判毒，其余跳过并视为通过；留空则对所有域名判毒。
-	CommonBlockedDomainsPath string `yaml:"common_blocked_domains_path"`
+	// SkipTLSVerifyDomains 不做 TLS 证书判毒的域名（配置内联）。一行一域：apex 及任意子域；行首 *.example.com 仅匹配严格子域（RFC 4592）。适用于无 HTTPS 或信任无污染的场景；命中时跳过 TLS 与 ASN 前缀校验。
+	SkipTLSVerifyDomains []string `yaml:"skip_tls_verify_domains"`
+	// SkipTLSVerifyDomainsPath 同上列表的文件路径（纯文本），相对 base_dir；与 skip_tls_verify_domains 合并。
+	SkipTLSVerifyDomainsPath string `yaml:"skip_tls_verify_domains_path"`
 	// ASNMergeIntervalHours 多源合并定时间隔（小时）；启动时仅当 cache 下合并文件不存在才自动合并一次，0 表示不轮询（可手动 asn-merge）
 	ASNMergeIntervalHours int `yaml:"asn_merge_interval_hours"`
 	// ASNMergeAppleRIPE 为 true 时将 RIPE 公布的 AS714 前缀并入 apple（列表可能很长）
@@ -138,7 +140,6 @@ func Load(path string) (*Config, error) {
 	if cfg.PoisonCheck.ASNFilePath == "" {
 		cfg.PoisonCheck.ASNFilePath = "data/domain_asn.json"
 	}
-	// CommonBlockedDomainsPath 不设默认：留空表示对所有域名做 TLS 判毒；非空则仅对列表内域名判毒。
 
 	return &cfg, nil
 }

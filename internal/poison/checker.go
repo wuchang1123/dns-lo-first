@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,9 +34,8 @@ type cacheData map[string]map[string]*cacheEntry
 
 // Checker 判毒检查器
 type Checker struct {
-	config      config.PoisonCheckConfig
-	httpClient  *http.Client
-	sem         chan struct{} // 并发控制
+	config config.PoisonCheckConfig
+	sem    chan struct{} // 并发控制
 	cache       cacheData
 	cacheMu     sync.RWMutex
 	saveCacheMu sync.Mutex // 保护文件写入
@@ -54,10 +52,9 @@ type Checker struct {
 	asnManualPath string // 人工维护的 asn_file_path（后缀与回退前缀）
 	asnMergedPath string // cache 下多源合并产物（优先前缀来源）
 
-	// tlsVerifyRestrict 为 true 时仅对列表内域名做 TLS 判毒，其余域名 Check/checkTLS 直接视为通过。
-	tlsVerifyRestrict     bool
-	tlsVerifySet          map[string]struct{} // 普通行：apex 自身 + 任意子域
-	tlsVerifyWildcardOnly map[string]struct{} // *. 行（RFC 4592）：仅严格子域，不含 apex
+	// 排除列表：命中则跳过 TLS 握手与 ASN 校验，直接视为通过（含 source=local）。
+	tlsSkipVerifySet          map[string]struct{}
+	tlsSkipVerifyWildcardOnly map[string]struct{}
 }
 
 // CheckResult 检查结果
@@ -90,16 +87,7 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, bas
 	os.MkdirAll(cacheDir, 0755)
 
 	checker := &Checker{
-		config: cfg,
-		httpClient: &http.Client{
-			Timeout: time.Duration(cfg.TLSTimeout) * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: false,
-					ServerName:         "",
-				},
-			},
-		},
+		config:        cfg,
 		sem:           make(chan struct{}, cfg.ConcurrentChecks),
 		cache:         make(cacheData),
 		cacheTTL:      time.Duration(cfg.CacheTTL) * time.Minute,
@@ -127,17 +115,24 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, bas
 		}
 	}
 
-	if strings.TrimSpace(cfg.CommonBlockedDomainsPath) != "" {
-		listPath := config.ResolveDataPath(baseDir, cfg.CommonBlockedDomainsPath)
-		explicit, wildcard, err := loadTLSVerifyDomainList(listPath)
+	skipE := make(map[string]struct{})
+	skipW := make(map[string]struct{})
+	for _, s := range cfg.SkipTLSVerifyDomains {
+		appendDomainPatternLine(s, skipE, skipW)
+	}
+	if strings.TrimSpace(cfg.SkipTLSVerifyDomainsPath) != "" {
+		skipPath := config.ResolveDataPath(baseDir, cfg.SkipTLSVerifyDomainsPath)
+		e2, w2, err := loadDomainPatternFile(skipPath)
 		if err != nil {
-			logger.Warnf("读取 TLS 判毒域名列表失败，将对所有域名执行 TLS 判毒: %v", err)
+			logger.Warnf("读取 skip_tls_verify 域名列表失败: %v", err)
 		} else {
-			checker.tlsVerifyRestrict = true
-			checker.tlsVerifySet = explicit
-			checker.tlsVerifyWildcardOnly = wildcard
-			logger.Infof("TLS 判毒仅对列表内域名生效（%d 条 apex/子树，%d 条 *. 严格子域，%s）", len(explicit), len(wildcard), listPath)
+			mergeDomainPatternMaps(skipE, skipW, e2, w2)
 		}
+	}
+	checker.tlsSkipVerifySet = skipE
+	checker.tlsSkipVerifyWildcardOnly = skipW
+	if len(skipE)+len(skipW) > 0 {
+		logger.Infof("TLS 判毒排除列表（跳过证书校验）: %d apex/子树，%d *. 严格子域", len(skipE), len(skipW))
 	}
 
 	go func() {
@@ -156,8 +151,8 @@ func NewChecker(cfg config.PoisonCheckConfig, upstreamMgr *upstream.Manager, bas
 	return checker
 }
 
-// normalizeTLSName 规范化域名标签（查询或列表中的非通配部分）：小写、去空段，不处理 *。
-func normalizeTLSName(s string) string {
+// normalizeDomainForMatch 规范化域名用于列表匹配：小写、去首尾点与空标签，不处理 *。
+func normalizeDomainForMatch(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.TrimSuffix(s, ".")
 	s = strings.TrimPrefix(s, ".")
@@ -170,7 +165,38 @@ func normalizeTLSName(s string) string {
 	return strings.Join(parts, ".")
 }
 
-func loadTLSVerifyDomainList(path string) (explicit map[string]struct{}, wildcardOnly map[string]struct{}, err error) {
+func appendDomainPatternLine(raw string, explicit, wildcardOnly map[string]struct{}) {
+	line := strings.TrimSpace(raw)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return
+	}
+	isRFCWildcard := strings.HasPrefix(line, "*.")
+	rest := line
+	if isRFCWildcard {
+		rest = strings.TrimSpace(strings.TrimPrefix(line, "*."))
+		rest = strings.TrimPrefix(rest, ".")
+	}
+	d := normalizeDomainForMatch(rest)
+	if d == "" {
+		return
+	}
+	if isRFCWildcard {
+		wildcardOnly[d] = struct{}{}
+	} else {
+		explicit[d] = struct{}{}
+	}
+}
+
+func mergeDomainPatternMaps(dstE, dstW, srcE, srcW map[string]struct{}) {
+	for k := range srcE {
+		dstE[k] = struct{}{}
+	}
+	for k := range srcW {
+		dstW[k] = struct{}{}
+	}
+}
+
+func loadDomainPatternFile(path string) (explicit map[string]struct{}, wildcardOnly map[string]struct{}, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, nil, err
@@ -178,36 +204,16 @@ func loadTLSVerifyDomainList(path string) (explicit map[string]struct{}, wildcar
 	explicit = make(map[string]struct{})
 	wildcardOnly = make(map[string]struct{})
 	for _, raw := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		isRFCWildcard := strings.HasPrefix(line, "*.")
-		rest := line
-		if isRFCWildcard {
-			rest = strings.TrimSpace(strings.TrimPrefix(line, "*."))
-			rest = strings.TrimPrefix(rest, ".")
-		}
-		d := normalizeTLSName(rest)
-		if d == "" {
-			continue
-		}
-		if isRFCWildcard {
-			wildcardOnly[d] = struct{}{}
-		} else {
-			explicit[d] = struct{}{}
-		}
+		appendDomainPatternLine(raw, explicit, wildcardOnly)
 	}
 	return explicit, wildcardOnly, nil
 }
 
-// domainInTLSVerifyList 是否应对该域名做 TLS 判毒：普通行匹配 apex 及任意子域；*.example.com 行仅匹配严格子域（不匹配 example.com 本域，RFC 4592）。
-func (c *Checker) domainInTLSVerifyList(domain string) bool {
-	d := normalizeTLSName(domain)
+func domainMatchesPatternList(d string, explicit, wildcardOnly map[string]struct{}) bool {
 	if d == "" {
 		return false
 	}
-	for e := range c.tlsVerifySet {
+	for e := range explicit {
 		if e == "" {
 			continue
 		}
@@ -215,7 +221,7 @@ func (c *Checker) domainInTLSVerifyList(domain string) bool {
 			return true
 		}
 	}
-	for e := range c.tlsVerifyWildcardOnly {
+	for e := range wildcardOnly {
 		if e == "" {
 			continue
 		}
@@ -224,6 +230,10 @@ func (c *Checker) domainInTLSVerifyList(domain string) bool {
 		}
 	}
 	return false
+}
+
+func (c *Checker) domainInSkipTLSVerifyList(domain string) bool {
+	return domainMatchesPatternList(normalizeDomainForMatch(domain), c.tlsSkipVerifySet, c.tlsSkipVerifyWildcardOnly)
 }
 
 // checkAndSyncCacheFile 检查并同步缓存文件状态
@@ -706,9 +716,8 @@ func (c *Checker) Check(domain string, ips []net.IP, source string) *CheckResult
 		return result
 	}
 
-	// 当 source 是 "local" 时，我们总是要执行 TLS 验证，不管 common_blocked_domains 列表
-	if source != "local" && c.tlsVerifyRestrict && !c.domainInTLSVerifyList(domain) {
-		result.Reason = "tls verify skipped (not in common_blocked_domains list)"
+	if c.domainInSkipTLSVerifyList(domain) {
+		result.Reason = "tls verify skipped (skip_tls_verify list)"
 		result.Duration = time.Since(start)
 		return result
 	}
@@ -767,8 +776,7 @@ type tlsCheckResult struct {
 
 // checkTLS 对单个IP进行检查（优先IP段检查）
 func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckResult {
-	// 当 source 是 "local" 时，我们总是要执行 TLS 验证，不管 common_blocked_domains 列表
-	if source != "local" && c.tlsVerifyRestrict && !c.domainInTLSVerifyList(domain) {
+	if c.domainInSkipTLSVerifyList(domain) {
 		return &tlsCheckResult{ip: ip, success: true}
 	}
 

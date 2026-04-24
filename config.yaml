@@ -5,9 +5,9 @@ base_dir: "."
 # HTTPS 下载（所在国列表、ASN 合并等）解析域名时使用的递归 DNS（Do53，host:port）。
 # 本服务刚启动时系统 resolv 可能不可用（如指向 [::1]:53），此处显式指定可避免依赖本机解析。
 # 留空则使用下方 upstream 中非回环地址；若仍为空则内置 223.5.5.5 / 8.8.8.8 / 1.1.1.1。
-# bootstrap_dns:
-#   - "223.5.5.5:53"
-#   - "8.8.8.8:53"
+bootstrap_dns:
+  - "223.5.5.5:53"
+  - "8.8.8.8:53"
 
 server:
   # 监听地址
@@ -48,12 +48,6 @@ local_domains:
   # 自定义域名列表
   # 外国域名写入这里的话，会走本地 DNS。但是 overpass 重复定义的话，会走海外 DNS
   custom:
-    - "baidu.com"
-    - "alibaba.com"
-    - "tencent.com"
-    - "jd.com"
-    - "taobao.com"
-    - "tmall.com"
     - "ntp.org"
   # 跳过本地，直接用海外 DNS
   overpass:
@@ -79,11 +73,15 @@ poison_check:
   asn_enabled: true
   # 人工维护的 ASN 配置（域名后缀→组织、可选静态前缀）；程序启动时必读
   asn_file_path: "./data/domain_asn.json"
-  # 常见受限/测试域名列表（一行一域，# 为注释）。
-  # example.com 表示 apex+所有子域；*.example.com 表示仅子域（不含 apex，RFC 4592）。
-  # 相对路径相对于 base_dir。非空时仅列表命中项做 TLS 判毒，其余视为通过。
-  # 留空则对所有域名判毒。
-  common_blocked_domains_path: "./data/common_blocked_domains.txt"
+  # 不做 TLS 证书判毒的排除列表（无 HTTPS 或信任无污染时）。apex+子域；*.example.com 仅子域（RFC 4592）。
+  # 命中后跳过 TLS 握手与 ASN 前缀校验，直接视为通过。
+  skip_tls_verify_domains:
+    - "ntp.org"
+    - "adblockplus.org"
+    - "visualstudio.com"
+    - "xiaobaotv.com"
+    - "github.com"
+  # skip_tls_verify_domains_path: "./data/skip_tls_verify_domains.txt"
   # 多源合并：启动时仅当 cache/domain_asn.merged.json 不存在才自动合并；
   # 本项为定时间隔（小时），0 表示不轮询（可 go run ./cmd/asn-merge）
   asn_merge_interval_hours: 0

@@ -148,9 +148,6 @@ func main() {
 		logger.Printf("ASN 人工配置: %s", manual)
 		logger.Printf("ASN 合并缓存(前缀优先): %s", merged)
 	}
-	if cfg.PoisonCheck.CommonBlockedDomainsPath != "" {
-		logger.Printf("TLS 判毒域名列表: %s", config.ResolveDataPath(cfg.BaseDir, cfg.PoisonCheck.CommonBlockedDomainsPath))
-	}
 
 	// 创建DNS服务器
 	dnsServer := server.NewServer(cfg, upstreamMgr, domainMgr, poisonChecker)
