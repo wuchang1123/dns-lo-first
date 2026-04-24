@@ -50,14 +50,14 @@ type Checker struct {
 	domainToOrg   map[string]string      // 域名 -> org
 	orgToPrefixes map[string][]net.IPNet // org -> IP段列表
 	dnsClient     *dns.Client            // DNS客户端，用于反向查询
-	asnMu          sync.RWMutex
-	asnManualPath  string // 人工维护的 asn_file_path（后缀与回退前缀）
-	asnMergedPath  string // cache 下多源合并产物（优先前缀来源）
+	asnMu         sync.RWMutex
+	asnManualPath string // 人工维护的 asn_file_path（后缀与回退前缀）
+	asnMergedPath string // cache 下多源合并产物（优先前缀来源）
 
 	// tlsVerifyRestrict 为 true 时仅对列表内域名做 TLS 判毒，其余域名 Check/checkTLS 直接视为通过。
-	tlsVerifyRestrict       bool
-	tlsVerifySet            map[string]struct{} // 普通行：apex 自身 + 任意子域
-	tlsVerifyWildcardOnly   map[string]struct{} // *. 行（RFC 4592）：仅严格子域，不含 apex
+	tlsVerifyRestrict     bool
+	tlsVerifySet          map[string]struct{} // 普通行：apex 自身 + 任意子域
+	tlsVerifyWildcardOnly map[string]struct{} // *. 行（RFC 4592）：仅严格子域，不含 apex
 }
 
 // CheckResult 检查结果
@@ -319,7 +319,9 @@ func buildCompositeASN(hand *ASNData, merged *ASNData) *ASNData {
 	out := &ASNData{
 		Version:  hand.Version,
 		Suffixes: hand.Suffixes,
-		Orgs:     make(map[string]struct{ Prefixes []string `json:"prefixes"` }),
+		Orgs: make(map[string]struct {
+			Prefixes []string `json:"prefixes"`
+		}),
 	}
 	for org, ho := range hand.Orgs {
 		prefixes := ho.Prefixes
@@ -328,7 +330,9 @@ func buildCompositeASN(hand *ASNData, merged *ASNData) *ASNData {
 				prefixes = mo.Prefixes
 			}
 		}
-		out.Orgs[org] = struct{ Prefixes []string `json:"prefixes"` }{Prefixes: prefixes}
+		out.Orgs[org] = struct {
+			Prefixes []string `json:"prefixes"`
+		}{Prefixes: prefixes}
 	}
 	return out
 }
@@ -702,7 +706,8 @@ func (c *Checker) Check(domain string, ips []net.IP, source string) *CheckResult
 		return result
 	}
 
-	if c.tlsVerifyRestrict && !c.domainInTLSVerifyList(domain) {
+	// 当 source 是 "local" 时，我们总是要执行 TLS 验证，不管 common_blocked_domains 列表
+	if source != "local" && c.tlsVerifyRestrict && !c.domainInTLSVerifyList(domain) {
 		result.Reason = "tls verify skipped (not in common_blocked_domains list)"
 		result.Duration = time.Since(start)
 		return result
@@ -762,7 +767,8 @@ type tlsCheckResult struct {
 
 // checkTLS 对单个IP进行检查（优先IP段检查）
 func (c *Checker) checkTLS(domain string, ip net.IP, source string) *tlsCheckResult {
-	if c.tlsVerifyRestrict && !c.domainInTLSVerifyList(domain) {
+	// 当 source 是 "local" 时，我们总是要执行 TLS 验证，不管 common_blocked_domains 列表
+	if source != "local" && c.tlsVerifyRestrict && !c.domainInTLSVerifyList(domain) {
 		return &tlsCheckResult{ip: ip, success: true}
 	}
 

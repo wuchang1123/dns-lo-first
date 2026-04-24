@@ -4,7 +4,9 @@
 
 基于Go开发的高性能本地DNS服务器，支持智能分流、判毒检测和定时更新。
 
-**❗ 重要提示：所有海外上游服务器是否可用都依赖你的梯子**，本项目不关注
+**❗ 重要提示：**
+- IPv4 Only
+- 本项目不关注海外上游服务器是否可用
 
 ## 特性
 
@@ -212,7 +214,7 @@ dns-lo-first/
 
 1. **接收请求**: 监听UDP 53端口接收DNS查询
 2. **缓存检查**: 检查是否有缓存的响应
-3. **域名分类**: 
+3. **域名分类**:
    - 所在国域名：直接查询本地DNS
    - 海外域名：并发查询本地+海外DNS
 4. **判毒检查**（仅海外域名）:
@@ -220,6 +222,198 @@ dns-lo-first/
    - 通过：直接返回本地结果
    - 不通过：等待并返回海外DNS结果
 5. **返回响应**: 将结果返回给客户端并缓存
+
+### DNS 查询流程详解
+
+```
+ServeDNS(入口)
+    │
+    ├── 1. 前置检查
+    │       ├── 非 TypeA 查询 → 直接失败返回
+    │       └── 清理域名（移除 http://、https://、路径）
+    │
+    ├── 2. Overpass 域名检查
+    │       ├── isOverpassDomain = true → 直接用海外 DNS
+    │       └── isOverpassDomain = false → 继续
+    │
+    ├── 3. 本地缓存检查（仅非 Overpass 域名）
+    │       └── 如果是本地域名且有本地缓存 → 直接返回缓存
+    │               ipSource = "local_cache"
+    │
+    ├── 4. TLS 缓存检查（passed IPs）
+    │       └── 如果有有效 TLS 缓存 → 直接返回缓存响应
+    │               ipSource = "tls_cache"
+    │
+    ├── 5. 并发查询控制（pending queries）
+    │       └── 如果已有相同查询 → 加入等待队列
+    │
+    └── 6. 执行查询（根据域名类型）
+            │
+            ├── 【Overpass 域名】→ queryOverseasOnly()
+            │       └── ipSource = "overseas_upstream"
+            │
+            ├── 【本地域名】→ queryLocalOnly()
+            │       └── ipSource = "local_upstream"
+            │
+            └── 【普通域名】→ queryWithPoisonCheck()
+                    │
+                    └── 返回 (response, source, error)
+                            source 可能是：
+                            • "tls_cache" - 从 TLS 缓存返回
+                            • "asn_pass" - ASN 检查通过
+                            • "local_upstream" - 本地 DNS 响应通过判毒
+                            • "overseas_upstream" - 海外 DNS 响应
+                            • "unknown" - 查询失败
+```
+
+#### 详细分支路线图
+
+##### 路线 1：Overpass 域名（直接海外）
+
+```
+isOverpassDomain = true
+    → queryOverseasOnly()
+        ├── 先检查 TLS 缓存 → 有则直接返回
+        ├── 执行海外 DNS 查询
+        ├── ASN 检查 → 通过则立即返回
+        ├── TLS 验证（后台执行）
+        └── 返回海外响应
+    → ipSource = "overseas_upstream"
+```
+
+##### 路线 2：本地域名（直接本地）
+
+```
+isLocalDomain = true（且不是 Overpass）
+    → 先检查本地 DNS 缓存 → 有则直接返回
+    │       ipSource = "local_cache"
+    → queryLocalOnly()
+    → ipSource = "local_upstream"
+```
+
+##### 路线 3：普通域名（判毒流程）
+
+```
+isLocalDomain = false 且 isOverpassDomain = false
+    → queryWithPoisonCheck()
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 阶段一：检查 TLS 缓存（乐观缓存策略）                        │
+    │   ├── 有有效缓存 → 直接返回缓存响应                           │
+    │   │           （后台继续查询本地和海外 DNS）                 │
+    │   └── 无缓存 → 继续正常流程                                  │
+    └─────────────────────────────────────────────────────────────┘
+    │
+    ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 阶段二：并发查询本地和海外 DNS                               │
+    │   • 本地 DNS：3 秒超时                                      │
+    │   • 海外 DNS：5 秒超时                                       │
+    └─────────────────────────────────────────────────────────────┘
+    │
+    ├── 【本地 DNS 先返回】
+    │       │
+    │       ├── ASN 检查
+    │       │       ├── 通过 → 立即返回，TTL=3
+    │       │       │       ipSource = "asn_pass"
+    │       │       └── 不通过 → 继续判毒
+    │       │
+    │       ├── TLS 判毒（source = "local"）
+    │       │       │
+    │       │       ├── 【关键】source = "local" 时，强制执行 TLS 验证
+    │       │       │   无论域名是否在 common_blocked_domains 列表
+    │       │       │
+    │       │       ├── TLS 验证结果：
+    │       │       │   ├── passed = true
+    │       │       │   │       → 返回本地响应
+    │       │       │   │           ipSource = "local_upstream"
+    │       │       │   │           （后台验证剩余 IP）
+    │       │       │   │
+    │       │       │   └── passed = false
+    │       │       │           → 继续等待海外 DNS
+    │       │       │
+    │       └── 本地超时 → 继续等待海外 DNS
+    │
+    └── 【海外 DNS 先返回】
+            │
+            ├── ASN 检查
+            │       ├── 通过 → 立即返回，TTL=3
+            │       │       ipSource = "asn_pass"
+            │       └── 不通过 → 继续判毒
+            │
+            ├── TLS 判毒（source = "overseas"）
+            │       │
+            │       ├── 【TLS 验证跳过条件检查】
+            │       │   同时满足以下条件才跳过 TLS 验证：
+            │       │   1. source ≠ "local"（即来自海外）
+            │       │   2. tlsVerifyRestrict = true
+            │       │   3. 域名不在 common_blocked_domains 列表
+            │       │
+            │       ├── 跳过 TLS 验证时：
+            │       │       → 直接 passed = true
+            │       │       → 返回海外响应
+            │       │           ipSource = "overseas_upstream"
+            │       │
+            │       └── 执行 TLS 验证时：
+            │               ├── passed = true
+            │               │       → 返回海外响应
+            │               │           ipSource = "overseas_upstream"
+            │               │           （后台验证剩余 IP）
+            │               │
+            │               └── passed = false
+            │                       → 返回响应但 TTL=1
+            │                       ipSource = "overseas_upstream"
+            │
+            └── 海外超时 → 返回查询失败
+```
+
+#### ipSource 含义说明
+
+| ipSource | 说明 |
+|----------|------|
+| `local_cache` | 直接用本地 DNS 缓存 |
+| `local_upstream` | 本地 DNS 响应，通过判毒检查 |
+| `overseas_upstream` | 海外 DNS 响应 |
+| `asn_pass` | IP 在 org IP 段内，ASN 检查通过 |
+| `tls_cache` | 从 TLS 验证缓存返回 |
+| `unknown` | 查询失败 |
+
+#### common_blocked_domains 配置说明
+
+`common_blocked_domains.txt` 文件用于配置需要 TLS 判毒的域名列表：
+
+- **为空时**：对所有域名都进行 TLS 判毒
+- **非空时**：仅对列表内的域名做 TLS 判毒，其余域名直接视为通过
+
+TLS 验证跳过条件（必须同时满足）：
+
+| 条件 | 说明 |
+|------|------|
+| `source != "local"` | 来源是海外 DNS（不是本地 DNS） |
+| `tlsVerifyRestrict = true` | 配置了 common_blocked_domains 列表 |
+| 域名不在列表中 | 不在 common_blocked_domains 列表 |
+
+**重要**：当 `source = "local"` 时（本地 DNS 返回的 IP），无论域名是否在列表中，都会**强制执行 TLS 验证**。
+
+#### 日志示例
+
+```
+# 本地域名查询
+[LOCAL DOMAIN] baidu.com -> 使用本地DNS
+
+# Overpass 域名查询
+[OVERPASS DOMAIN] googlevideo.com -> 直接使用海外DNS
+
+# 普通域名查询（本地通过判毒）
+[POISON CHECK] google.com: 检查 1/1 个IP [142.250.x.x], passed=true, reason=all TLS checks passed
+[LOCAL OK] google.com -> 判毒通过，使用本地DNS
+
+# 普通域名查询（本地判毒失败，等待海外）
+[POISON CHECK] chatgpt.com: 检查 1/1 个IP [184.173.x.x], passed=false, reason=TLS handshake failed
+[WAIT OVERSEAS] chatgpt.com -> 等待海外DNS
+[OVERSEAS CHECK] chatgpt.com: 检查 1/1 个IP [104.16.x.x], passed=true
+[OVERSEAS OK] chatgpt.com -> 使用海外DNS
+```
 
 ### 数据更新
 

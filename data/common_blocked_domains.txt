@@ -41,6 +41,7 @@ archive.org
 pinterest.com
 snapchat.com
 linkedin.com
+chatgpt.com
 
 # ---------- CDN / 静态与边缘（常与上列业务同属一类链路）----------
 

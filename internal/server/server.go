@@ -186,31 +186,10 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			response, err = s.queryLocalOnly(r)
 			ipSource = "local_upstream"
 		} else {
-			response, err = s.queryWithPoisonCheck(r, domain)
-			// 根据响应结果设置ipSource
+			response, responseSource, err := s.queryWithPoisonCheck(r, domain)
+			// 直接使用 queryWithPoisonCheck 返回的 source
 			if err == nil && response != nil {
-				// 检查是否为ASN通过的响应
-				if len(response.Answer) > 0 {
-					for _, answer := range response.Answer {
-						if a, ok := answer.(*dns.A); ok {
-							// 检查IP是否在组织IP段内
-							if s.poisonChecker.CheckIPInOrgPrefixes(domain, a.A) {
-								ipSource = "asn_pass"
-								break
-							}
-						}
-					}
-				}
-				// 如果不是ASN通过，则根据响应来源设置
-				if ipSource == "unknown" {
-					// 检查是否有本地DNS响应
-					localResult := s.upstreamMgr.QueryLocal(context.Background(), r)
-					if localResult.Err == nil && localResult.Response != nil {
-						ipSource = "local_upstream"
-					} else {
-						ipSource = "overseas_upstream"
-					}
-				}
+				ipSource = responseSource
 			}
 		}
 	}
@@ -367,7 +346,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 }
 
 // queryWithPoisonCheck 使用判毒系统查询
-func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, error) {
+func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, string, error) {
 	// 先检查缓存是否有通过的IP（乐观缓存策略）
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
 	if hasValidCache {
@@ -421,7 +400,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			}
 		}()
 
-		return resp, nil
+		return resp, "tls_cache", nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -464,7 +443,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 				}()
 
 				cancel() // 取消海外查询
-				return resp, nil
+				return resp, "asn_pass", nil
 			}
 
 			// 进行判毒检查（使用原始域名，因为CDN证书通常对原始域名有效）
@@ -511,7 +490,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 				}
 
 				cancel() // 取消海外查询
-				return localResult.Response, nil
+				return localResult.Response, "local_upstream", nil
 			}
 		}
 	case <-time.After(3 * time.Second):
@@ -540,7 +519,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						s.processTLSCheck(domain, ips, "overseas", "[OVERSEAS CHECK]")
 					}()
 
-					return resp, nil
+					return resp, "asn_pass", nil
 				}
 
 				// 随机选择一个IP
@@ -571,7 +550,7 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 						for _, answer := range resp.Answer {
 							answer.Header().Ttl = 3
 						}
-						return resp, nil
+						return resp, "overseas_upstream", nil
 					}
 				}
 
@@ -600,13 +579,13 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, erro
 			}
 
 			logger.Printf("[OVERSEAS OK] %s -> 使用海外DNS", domain)
-			return overseasResult.Response, nil
+			return overseasResult.Response, "overseas_upstream", nil
 		}
 	case <-time.After(5 * time.Second):
 		logger.Printf("[TIMEOUT] %s -> 海外DNS超时", domain)
 	}
 
-	return nil, fmt.Errorf("查询失败")
+	return nil, "unknown", fmt.Errorf("查询失败")
 }
 
 // extractIPs 从DNS响应中提取IP列表
