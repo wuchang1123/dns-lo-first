@@ -136,7 +136,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	// 优先从TLS验证缓存获取passed IPs（统一缓存策略）
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
-	if hasValidCache {
+	if hasValidCache && len(passedIPs) > 0 {
 		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 300)
 		resp.Id = r.Id
 		// 提取响应IP
@@ -246,9 +246,9 @@ func (s *Server) recordQueryTime(domain string, queryTime time.Duration, ipSourc
 		logFileName := fmt.Sprintf("query_times_%s.txt", time.Now().Format("2006-01-02"))
 		logFilePath := filepath.Join(s.cachePath, logFileName)
 
-		// 记录格式：时间戳 域名 耗时(ms) 来源 IP列表
+		// 记录格式：时间戳 耗时(ms) 域名 来源 IP列表
 		ips := strings.Join(responseIPs, ",")
-		logEntry := fmt.Sprintf("%s %s %d %s %s\n", time.Now().Format("2006-01-02 15:04:05"), domain, queryTime.Milliseconds(), ipSource, ips)
+		logEntry := fmt.Sprintf("%s %d %s %s %s\n", time.Now().Format("2006-01-02 15:04:05"), queryTime.Milliseconds(), domain, ipSource, ips)
 
 		// 以追加模式打开文件
 		file, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -304,7 +304,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 
 	// 乐观缓存策略：先检查TLS验证缓存是否有通过的IP
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
-	if hasValidCache {
+	if hasValidCache && len(passedIPs) > 0 {
 		// 构建响应消息
 		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 300)
 
@@ -361,7 +361,7 @@ func (s *Server) queryOverseasOnly(r *dns.Msg) (*dns.Msg, error) {
 func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, string, error) {
 	// 先检查缓存是否有通过的IP（乐观缓存策略）
 	passedIPs, hasValidCache := s.poisonChecker.GetPassedIPs(domain)
-	if hasValidCache {
+	if hasValidCache && len(passedIPs) > 0 {
 		// 构建响应消息
 		resp := s.poisonChecker.BuildDNSResponse(domain, passedIPs, 300)
 
@@ -504,6 +504,28 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, stri
 				cancel() // 取消海外查询
 				return localResult.Response, "local_upstream", nil
 			}
+			// 判毒不通过：后台验证剩余 IP，随后继续等待海外结果
+			if len(allIps) > 1 {
+				go func() {
+					remainingIPs := make([]net.IP, 0, len(allIps)-1)
+					for _, ip := range allIps {
+						found := false
+						for _, selectedIP := range ips {
+							if ip.Equal(selectedIP) {
+								found = true
+								break
+							}
+						}
+						if !found {
+							remainingIPs = append(remainingIPs, ip)
+						}
+					}
+					if len(remainingIPs) > 0 {
+						s.poisonChecker.Check(domain, remainingIPs, "local")
+						logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP (from LOCAL FAIL)", domain, len(remainingIPs))
+					}
+				}()
+			}
 		}
 	case <-time.After(3 * time.Second):
 		logger.Printf("[TIMEOUT] %s -> 本地DNS超时", domain)
@@ -554,13 +576,31 @@ func (s *Server) queryWithPoisonCheck(r *dns.Msg, domain string) (*dns.Msg, stri
 						domain, len(ips), ipsStr, checkResult.Passed, checkResult.Reason, checkResult.Duration)
 
 					if !checkResult.Passed {
-						// 验证失败，直接返回，TTL为3
-						logger.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，但是ttl设置为1", domain)
-						// 基于原始海外响应创建响应，修改TTL为3
+						logger.Printf("[OVERSEAS FAIL] %s -> TLS验证失败，直接返回，Answer TTL 置为 3", domain)
 						resp := overseasResult.Response.Copy()
-						// 确保TTL为1
 						for _, answer := range resp.Answer {
 							answer.Header().Ttl = 3
+						}
+						if len(ips) > 1 {
+							go func() {
+								remainingIPs := make([]net.IP, 0, len(ips)-1)
+								for _, ip := range ips {
+									found := false
+									for _, selectedIP := range selectedIPs {
+										if ip.Equal(selectedIP) {
+											found = true
+											break
+										}
+									}
+									if !found {
+										remainingIPs = append(remainingIPs, ip)
+									}
+								}
+								if len(remainingIPs) > 0 {
+									s.poisonChecker.Check(domain, remainingIPs, "overseas")
+									logger.Printf("[BACKGROUND CHECK] %s: 后台验证 %d 个剩余IP (from OVERSEAS FAIL)", domain, len(remainingIPs))
+								}
+							}()
 						}
 						return resp, "overseas_upstream", nil
 					}

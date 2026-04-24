@@ -996,7 +996,22 @@ func (c *Checker) refreshDomainCache(domain string) {
 		for _, ipStr := range remainingIPs {
 			ip := net.ParseIP(ipStr)
 			if ip != nil {
-				result := c.checkTLS(domain, ip, "cache_refresh")
+				// 获取原始的 source 值
+				originalSource := ""
+				c.cacheMu.RLock()
+				if domainCache, exists := c.cache[domain]; exists {
+					if entry, exists := domainCache[ipStr]; exists {
+						originalSource = entry.Source
+					}
+				}
+				c.cacheMu.RUnlock()
+
+				// 如果没有原始 source，使用默认值
+				if originalSource == "" {
+					originalSource = "overseas"
+				}
+
+				result := c.checkTLS(domain, ip, originalSource)
 				if result.success {
 					fmt.Printf("[CACHE REFRESH] %s: IP %s 验证通过\n", domain, ipStr)
 				} else {
@@ -1091,7 +1106,7 @@ func (c *Checker) queryAndVerifyFromUpstream(domain string) {
 
 	fmt.Printf("[CACHE REFRESH] %s: 从上游获取 %d 个IP，开始验证\n", domain, len(ips))
 	for _, ip := range ips {
-		result := c.checkTLS(domain, ip, "upstream_refresh")
+		result := c.checkTLS(domain, ip, "overseas")
 		if result.success {
 			fmt.Printf("[CACHE REFRESH] %s: 上游IP %s 验证通过\n", domain, ip.String())
 		} else {

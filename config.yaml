@@ -46,6 +46,7 @@ local_domains:
   # 更新间隔（小时）
   update_interval: 24
   # 自定义域名列表
+  # 外国域名写入这里的话，会走本地 DNS。但是 overpass 重复定义的话，会走海外 DNS
   custom:
     - "baidu.com"
     - "alibaba.com"
@@ -53,6 +54,7 @@ local_domains:
     - "jd.com"
     - "taobao.com"
     - "tmall.com"
+    - "ntp.org"
   # 跳过本地，直接用海外 DNS
   overpass:
     - "googlevideo.com"
