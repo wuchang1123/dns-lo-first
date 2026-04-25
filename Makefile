@@ -19,6 +19,12 @@ build:
 
 build-all: darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 linux-armv7 windows-amd64 windows-arm64
 
+build-linux: linux-amd64 linux-arm64 linux-armv7
+
+build-windows: windows-amd64 windows-arm64
+
+build-macos: darwin-amd64 darwin-arm64
+
 test:
 	$(GO) test ./...
 

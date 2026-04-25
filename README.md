@@ -178,13 +178,8 @@ log/query.log
 查询日志格式固定为无键值字段：
 
 ```text
-2026-04-25 10:54:52 161.811ms default.exp-tas.com.  A  IN  [13.107.5.93]  NOERROR <nil>
-```
-
-字段依次为：
-
-```text
 时间 耗时 qname qtype qclass 响应IPs RCODE 写响应错误
+2026-04-25 10:54:52 161.811ms default.exp-tas.com.  A  IN  [13.107.5.93]
 ```
 
 耗时统一使用毫秒，保留 3 位小数并四舍五入。
