@@ -26,7 +26,7 @@ build-windows: windows-amd64 windows-arm64
 build-macos: darwin-amd64 darwin-arm64
 
 test:
-	$(GO) test ./...
+	$(GO_BUILD_ENV) $(GO) test ./...
 
 clean:
 	rm -rf $(BIN_DIR)
