@@ -26,6 +26,13 @@ type Client struct {
 	cooldownTTL time.Duration
 	scoreMu     sync.RWMutex
 	latency     map[string]time.Duration
+	log         Logger
+}
+
+type Logger interface {
+	Debugf(format string, args ...any)
+	Infof(format string, args ...any)
+	Warnf(format string, args ...any)
 }
 
 type Result struct {
@@ -48,6 +55,10 @@ func New(timeout time.Duration) *Client {
 	}
 }
 
+func (c *Client) SetLogger(log Logger) {
+	c.log = log
+}
+
 func (c *Client) Query(ctx context.Context, server string, req *dns.Msg) (*dns.Msg, error) {
 	server = strings.TrimSpace(server)
 	if server == "" {
@@ -59,11 +70,11 @@ func (c *Client) Query(ctx context.Context, server string, req *dns.Msg) (*dns.M
 	return c.queryDo53(ctx, server, req)
 }
 
-func (c *Client) QueryFirst(ctx context.Context, servers []string, req *dns.Msg) Result {
+func (c *Client) QueryFirst(ctx context.Context, group string, servers []string, req *dns.Msg) Result {
 	if len(servers) == 0 {
 		return Result{Err: errors.New("no upstream servers configured")}
 	}
-	servers = c.usableServers(servers)
+	servers = c.usableServers(group, servers)
 	if len(servers) == 0 {
 		return Result{Err: errors.New("no usable upstream servers")}
 	}
@@ -71,10 +82,10 @@ func (c *Client) QueryFirst(ctx context.Context, servers []string, req *dns.Msg)
 	start := time.Now()
 	msg, err := c.Query(ctx, first, req.Copy())
 	if err == nil && msg != nil {
-		c.recordLatency(first, time.Since(start))
+		c.recordLatency(group, first, time.Since(start))
 		return Result{Server: first, Msg: msg}
 	}
-	c.freezeIfTimeout(first, err)
+	c.freezeIfTimeout(group, first, err)
 	if len(servers) == 1 {
 		return Result{Server: first, Err: err}
 	}
@@ -90,9 +101,9 @@ func (c *Client) QueryFirst(ctx context.Context, servers []string, req *dns.Msg)
 			start := time.Now()
 			msg, err := c.Query(ctx, server, req.Copy())
 			if err == nil && msg != nil {
-				c.recordLatency(server, time.Since(start))
+				c.recordLatency(group, server, time.Since(start))
 			}
-			c.freezeIfTimeout(server, err)
+			c.freezeIfTimeout(group, server, err)
 			ch <- Result{Server: server, Msg: msg, Err: err}
 		}()
 	}
@@ -108,7 +119,7 @@ func (c *Client) QueryFirst(ctx context.Context, servers []string, req *dns.Msg)
 	return last
 }
 
-func (c *Client) usableServers(servers []string) []string {
+func (c *Client) usableServers(group string, servers []string) []string {
 	now := time.Now()
 	c.cooldownMu.Lock()
 	defer c.cooldownMu.Unlock()
@@ -121,7 +132,8 @@ func (c *Client) usableServers(servers []string) []string {
 		if server == "" {
 			continue
 		}
-		until, frozen := c.cooldowns[server]
+		key := scopedKey(group, server)
+		until, frozen := c.cooldowns[key]
 		if frozen && now.Before(until) {
 			if earliestServer == "" || until.Before(earliestUntil) {
 				earliestServer = server
@@ -130,36 +142,55 @@ func (c *Client) usableServers(servers []string) []string {
 			continue
 		}
 		if frozen {
-			delete(c.cooldowns, server)
+			delete(c.cooldowns, key)
+			c.logInfof("upstream thawed group=%s server=%s reason=expired", normalizeGroup(group), server)
 		}
 		available = append(available, server)
 	}
 	if len(available) > 0 {
-		return c.sortByScore(available)
+		return c.sortByScore(group, available)
 	}
 	if earliestServer != "" {
-		delete(c.cooldowns, earliestServer)
+		delete(c.cooldowns, scopedKey(group, earliestServer))
+		c.logInfof("upstream thawed group=%s server=%s reason=all_frozen earliest_until=%s", normalizeGroup(group), earliestServer, earliestUntil.Format(time.RFC3339))
 		return []string{earliestServer}
 	}
 	return nil
 }
 
-func (c *Client) recordLatency(server string, latency time.Duration) {
+func (c *Client) recordLatency(group, server string, latency time.Duration) {
+	key := scopedKey(group, server)
 	c.scoreMu.Lock()
-	defer c.scoreMu.Unlock()
-	current, ok := c.latency[server]
+	current, ok := c.latency[key]
+	oldScore := scoreForLatency(current)
+	var next time.Duration
 	if !ok || current <= 0 {
-		c.latency[server] = latency
-		return
+		next = latency
+	} else {
+		next = (current*7 + latency*3) / 10
 	}
-	c.latency[server] = (current*7 + latency*3) / 10
+	c.latency[key] = next
+	newScore := scoreForLatency(next)
+	c.scoreMu.Unlock()
+
+	if oldScore != newScore || current != next {
+		c.logDebugf(
+			"upstream score updated group=%s server=%s latency=%s avg_latency=%s score=%d old_score=%d",
+			normalizeGroup(group),
+			server,
+			latency,
+			next,
+			newScore,
+			oldScore,
+		)
+	}
 }
 
-func (c *Client) sortByScore(servers []string) []string {
+func (c *Client) sortByScore(group string, servers []string) []string {
 	groups := map[int64][]string{}
 	var scores []int64
 	for _, server := range servers {
-		score := c.score(server)
+		score := c.score(group, server)
 		if _, ok := groups[score]; !ok {
 			scores = append(scores, score)
 		}
@@ -175,23 +206,62 @@ func (c *Client) sortByScore(servers []string) []string {
 	return out
 }
 
-func (c *Client) score(server string) int64 {
+func (c *Client) score(group, server string) int64 {
 	c.scoreMu.RLock()
-	latency := c.latency[server]
+	latency := c.latency[scopedKey(group, server)]
 	c.scoreMu.RUnlock()
+	if latency <= 0 {
+		return 0
+	}
+	return scoreForLatency(latency)
+}
+
+func (c *Client) freezeIfTimeout(group, server string, err error) {
+	if err == nil || !isTimeout(err) {
+		return
+	}
+	until := time.Now().Add(c.cooldownTTL)
+	c.cooldownMu.Lock()
+	c.cooldowns[scopedKey(group, server)] = until
+	c.cooldownMu.Unlock()
+	c.logWarnf("upstream frozen group=%s server=%s duration=%s until=%s reason=%v", normalizeGroup(group), server, c.cooldownTTL, until.Format(time.RFC3339), err)
+}
+
+func scoreForLatency(latency time.Duration) int64 {
 	if latency <= 0 {
 		return 0
 	}
 	return int64(time.Second / latency)
 }
 
-func (c *Client) freezeIfTimeout(server string, err error) {
-	if err == nil || !isTimeout(err) {
-		return
+func scopedKey(group, server string) string {
+	return normalizeGroup(group) + "|" + strings.TrimSpace(server)
+}
+
+func normalizeGroup(group string) string {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return "default"
 	}
-	c.cooldownMu.Lock()
-	c.cooldowns[server] = time.Now().Add(c.cooldownTTL)
-	c.cooldownMu.Unlock()
+	return group
+}
+
+func (c *Client) logDebugf(format string, args ...any) {
+	if c.log != nil {
+		c.log.Debugf(format, args...)
+	}
+}
+
+func (c *Client) logInfof(format string, args ...any) {
+	if c.log != nil {
+		c.log.Infof(format, args...)
+	}
+}
+
+func (c *Client) logWarnf(format string, args ...any) {
+	if c.log != nil {
+		c.log.Warnf(format, args...)
+	}
 }
 
 func isTimeout(err error) bool {

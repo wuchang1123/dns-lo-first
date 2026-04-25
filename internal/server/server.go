@@ -47,6 +47,9 @@ const (
 const (
 	defaultResolveTimeout = 8 * time.Second
 	optimisticTTL         = 2 * time.Second
+	upstreamGroupLocal    = "local"
+	upstreamGroupOverseas = "overseas"
+	upstreamGroupMixed    = "mixed"
 )
 
 func New(cfg *config.Config, log *logger.Logger, checker *poison.Checker) (*Server, error) {
@@ -62,10 +65,12 @@ func New(cfg *config.Config, log *logger.Logger, checker *poison.Checker) (*Serv
 	if err != nil {
 		return nil, err
 	}
+	client := upstream.New(time.Duration(cfg.PoisonCheck.TLSTimeout) * time.Second)
+	client.SetLogger(log)
 	return &Server{
 		cfg:          cfg,
 		log:          log,
-		client:       upstream.New(time.Duration(cfg.PoisonCheck.TLSTimeout) * time.Second),
+		client:       client,
 		respCache:    respCache,
 		verdictCache: verdictCache,
 		checker:      checker,
@@ -181,13 +186,14 @@ func (s *Server) refresh(req *dns.Msg, key string) {
 
 func (s *Server) resolve(req *dns.Msg, q dns.Question, key string) (*dns.Msg, error) {
 	if q.Qtype != dns.TypeA {
-		return s.forward(req, s.serversFor(s.routeFor(q.Name)))
+		r := s.routeFor(q.Name)
+		return s.forward(req, groupForRoute(r), s.serversFor(r))
 	}
 	switch s.routeFor(q.Name) {
 	case routeLocal:
-		return s.forward(req, s.cfg.Upstream.Servers.Local)
+		return s.forward(req, upstreamGroupLocal, s.cfg.Upstream.Servers.Local)
 	case routeOverseas:
-		return s.forward(req, s.cfg.Upstream.Servers.Overseas)
+		return s.forward(req, upstreamGroupOverseas, s.cfg.Upstream.Servers.Overseas)
 	default:
 		return s.resolveBoth(req, q, key)
 	}
@@ -217,10 +223,21 @@ func (s *Server) serversFor(r route) []string {
 	}
 }
 
-func (s *Server) forward(req *dns.Msg, servers []string) (*dns.Msg, error) {
+func groupForRoute(r route) string {
+	switch r {
+	case routeLocal:
+		return upstreamGroupLocal
+	case routeOverseas:
+		return upstreamGroupOverseas
+	default:
+		return upstreamGroupMixed
+	}
+}
+
+func (s *Server) forward(req *dns.Msg, group string, servers []string) (*dns.Msg, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultResolveTimeout)
 	defer cancel()
-	r := s.client.QueryFirst(ctx, servers, req)
+	r := s.client.QueryFirst(ctx, group, servers, req)
 	if r.Err != nil {
 		return nil, r.Err
 	}
@@ -232,10 +249,10 @@ func (s *Server) resolveBoth(req *dns.Msg, q dns.Question, key string) (*dns.Msg
 
 	ch := make(chan upstreamTaggedResult, 2)
 	go func() {
-		ch <- upstreamTaggedResult{side: "local", res: s.client.QueryFirst(ctx, s.cfg.Upstream.Servers.Local, req.Copy())}
+		ch <- upstreamTaggedResult{side: "local", res: s.client.QueryFirst(ctx, upstreamGroupLocal, s.cfg.Upstream.Servers.Local, req.Copy())}
 	}()
 	go func() {
-		ch <- upstreamTaggedResult{side: "overseas", res: s.client.QueryFirst(ctx, s.cfg.Upstream.Servers.Overseas, req.Copy())}
+		ch <- upstreamTaggedResult{side: "overseas", res: s.client.QueryFirst(ctx, upstreamGroupOverseas, s.cfg.Upstream.Servers.Overseas, req.Copy())}
 	}()
 
 	var local, overseas *dns.Msg
