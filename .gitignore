@@ -3,5 +3,7 @@
 *.tmp
 /bin/*
 /cache/*
+.gocache/
+.gomodcache/
 #/data/*
 /plan

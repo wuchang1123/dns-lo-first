@@ -2,7 +2,7 @@
 # 基础目录，默认当前目录
 base_dir: "."
 
-# HTTPS 下载（所在国列表、ASN 合并等）解析域名时使用的递归 DNS（Do53，host:port）。
+# 下载配置解析域名时使用的递归 DNS（Do53，host:port）。
 # 本服务刚启动时系统 resolv 可能不可用（如指向 [::1]:53），此处显式指定可避免依赖本机解析。
 # 留空则使用下方 upstream 中非回环地址；若仍为空则内置 223.5.5.5 / 8.8.8.8 / 1.1.1.1。
 bootstrap_dns:
@@ -12,50 +12,72 @@ bootstrap_dns:
 server:
   # 监听地址
   listen: ":5355"
-  # 缓存大小
-  cache_size: 10000
+  # 域名的默认 TTL 时间（秒）
+  domain_ttl: 60
+  # 本地+海外并发查询等待窗口（秒）
+  concurrent_timeout: 6
   # 日志时区
   log_timezone: "Asia/Shanghai"
   # 日志等级: debug, info, warn, error, fatal
   log_level: "info"
-  # 日志目录路径
+  # 日志目录路径（支持相对/绝对路径）
   log_path: "./log"
-  # 缓存目录路径
+  # 缓存目录路径（支持相对/绝对路径）
   cache_path: "./cache"
+  # 缓存大小
+  cache_size: 10000
 
 # 上游DNS服务器
 upstream:
-  # 本地DNS服务器（国内）
-  local:
-    - "223.5.5.5:53"      # 阿里云DNS
-    #- "223.6.6.6:53"      # 阿里云DNS备用
-    #- "114.114.114.114:53" # 114DNS
-  
-  # 海外DNS服务器
-  overseas:
-    - "8.8.8.8:53"        # Google DNS
-    - "8.8.4.4:53"        # Google DNS备用
-    - "1.1.1.1:53"        # Cloudflare DNS
+  servers:
+    # 本地 DNS 服务器（国内）
+    local:
+      - "223.5.5.5:53"      # 阿里云DNS
+      #- "223.6.6.6:53"      # 阿里云DNS备用
+      #- "114.114.114.114:53" # 114DNS
+    
+    # 海外 DNS 服务器
+    overseas:
+      - "8.8.8.8:53"        # Google DNS
+      - "8.8.4.4:53"        # Google DNS备用
+      - "1.1.1.1:53"        # Cloudflare DNS
+      
+  # 默认所有域名使用本地和海外 DNS 上游服务器
 
-# 所在国域名列表配置
-local_domains:
-  # 数据源URL
-  source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
-  # 本地文件路径
-  file_path: "./cache/china_domains.txt"
-  # 更新间隔（小时）
-  update_interval: 24
-  # 自定义域名列表
-  # 外国域名写入这里的话，会走本地 DNS。但是 overpass 重复定义的话，会走海外 DNS
-  custom:
+  # 只使用本地 DNS 服务器
+  # 外国域名写入这里的话，会走本地 DNS
+  local_only:
     - "ntp.org"
-  # 跳过本地，直接用海外 DNS
-  overpass:
+  # 只使用海外 DNS 上游服务器
+  overseas_only:
     - "googlevideo.com"
     - "ytimg.com"
     - "ggpht.com"
 
-# 判毒系统配置
+# 所在国域名列表配置
+# 只使用本地 DNS 上游服务器
+local_domains:
+  # 数据源URL
+  source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
+  # 本地文件路径
+  file_path: "./data/china_domains.txt"
+  # 更新间隔（小时）
+  update_interval: 24
+
+# 重点嫌疑域名
+key_suspect:
+  - domains:
+    - "google.com"
+    - "youtube.com"
+    - "facebook.com"
+    - "twitter.com"
+    - "instagram.com"
+    - "linkedin.com"
+    - "github.com"
+    - "gitlab.com"
+  
+
+# 病毒识别系统配置
 poison_check:
   # 是否启用
   enabled: true
@@ -65,31 +87,6 @@ poison_check:
   concurrent_checks: 10
   # 校验端口
   tls_port: 443
-  # 缓存刷新间隔（分钟），0表示禁用
-  cache_refresh_interval: 30
-  # 缓存过期时间（分钟）
-  cache_ttl: 32
   # 是否启用ASN判断
   asn_enabled: true
-  # 人工维护的 ASN 配置（域名后缀→组织、可选静态前缀）；程序启动时必读
   asn_file_path: "./data/domain_asn.yaml"
-  # 判毒白名单（checklist）。非空时仅对命中项做判毒，其余域名直接视为通过；留空则对所有域名判毒。
-  # apex+子域；*.example.com 仅子域（RFC 4592）。skip_tls_verify_domains 优先级更高。
-  # checklist:
-  #   - "google.com"
-  #   - "*.googlevideo.com"
-  # checklist_path: "./data/checklist.txt"
-  # 不做 TLS 证书判毒的排除列表（无 HTTPS 或信任无污染时）。apex+子域；*.example.com 仅子域（RFC 4592）。
-  # 命中后跳过 TLS 握手与 ASN 前缀校验，直接视为通过（优先于 checklist）。
-  skip_tls_verify_domains:
-    - "ntp.org"
-    - "adblockplus.org"
-    - "visualstudio.com"
-    - "xiaobaotv.com"
-    - "github.com"
-  # skip_tls_verify_domains_path: "./data/skip_tls_verify_domains.txt"
-  # 多源合并：启动时仅当 cache/domain_asn.merged.json 不存在才自动合并；
-  # 本项为定时间隔（小时），0 表示不轮询（可 go run ./cmd/asn-merge）
-  asn_merge_interval_hours: 0
-  # true 时额外合并 RIPE AS714 到 apple（前缀可能非常多）
-  asn_merge_apple_ripe: false
