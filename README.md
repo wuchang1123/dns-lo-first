@@ -118,6 +118,17 @@ local_domains:
 
 服务启动后会尝试下载更新，之后按 `update_interval` 小时间隔刷新。下载成功后会热加载到内存匹配器。
 
+EDNS Client Subnet 固定配置：
+
+```yaml
+edns_client_subnet:
+  enabled: false
+  ipv4: "0.0.0.0/0"
+  ipv6: ""
+```
+
+开启后，服务会把固定的 ECS 网段附加到发往上游的 DNS 请求中。推荐使用固定网段或匿名 `0.0.0.0/0`，避免按真实客户端 IP 透传带来的隐私和缓存一致性问题。
+
 污染识别：
 
 ```yaml

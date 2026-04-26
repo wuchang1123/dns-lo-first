@@ -45,11 +45,13 @@ const (
 )
 
 const (
-	defaultResolveTimeout = 8 * time.Second
-	optimisticTTL         = 2 * time.Second
-	upstreamGroupLocal    = "local"
-	upstreamGroupOverseas = "overseas"
-	upstreamGroupMixed    = "mixed"
+	defaultResolveTimeout      = 8 * time.Second
+	optimisticTTL              = 2 * time.Second
+	responseCacheMaxAge        = 48 * time.Hour
+	responseCacheCleanInterval = 24 * time.Hour
+	upstreamGroupLocal         = "local"
+	upstreamGroupOverseas      = "overseas"
+	upstreamGroupMixed         = "mixed"
 )
 
 func New(cfg *config.Config, log *logger.Logger, checker *poison.Checker) (*Server, error) {
@@ -67,6 +69,9 @@ func New(cfg *config.Config, log *logger.Logger, checker *poison.Checker) (*Serv
 	}
 	client := upstream.New(time.Duration(cfg.PoisonCheck.TLSTimeout) * time.Second)
 	client.SetLogger(log)
+	if err := client.SetEDNSClientSubnet(cfg.EDNSClientSubnet.Enabled, cfg.EDNSClientSubnet.IPv4, cfg.EDNSClientSubnet.IPv6); err != nil {
+		return nil, err
+	}
 	return &Server{
 		cfg:          cfg,
 		log:          log,
@@ -79,6 +84,12 @@ func New(cfg *config.Config, log *logger.Logger, checker *poison.Checker) (*Serv
 		localDomains: localDomains,
 		keySuspect:   rules.NewMatcher(cfg.KeySuspectDomains()),
 	}, nil
+}
+
+func (s *Server) StartCacheJanitor(ctx context.Context) {
+	s.respCache.StartJanitor(ctx, responseCacheCleanInterval, responseCacheMaxAge, func(removed int) {
+		s.log.Infof("cleaned response cache entries removed=%d max_age=%s", removed, responseCacheMaxAge)
+	})
 }
 
 func (s *Server) ReloadLocalDomains() error {
@@ -256,6 +267,7 @@ func (s *Server) resolveBoth(req *dns.Msg, q dns.Question, key string) (*dns.Msg
 	}()
 
 	var local, overseas *dns.Msg
+	var localServer, overseasServer string
 	var firstErr error
 	qname := rules.Normalize(q.Name)
 	processed := 0
@@ -269,27 +281,29 @@ func (s *Server) resolveBoth(req *dns.Msg, q dns.Question, key string) (*dns.Msg
 			}
 			if r.side == "local" {
 				local = r.res.Msg
+				localServer = r.res.Server
 				if s.keySuspect.Match(q.Name) && s.checker.CheckTLS(ctx, qname, poison.ExtractIPv4(local)) {
 					s.log.Infof("tls accepted local response for %s", qname)
 					if overseas == nil {
-						s.completeBothInBackground(ctx, cancel, ch, qname, local, overseas, local, key, 2-processed)
-						return s.finishBoth(qname, local, overseas, local), nil
+						s.completeBothInBackground(ctx, cancel, ch, qname, local, overseas, local, "local", localServer, overseasServer, key, 2-processed)
+						return s.finishBoth(qname, local, overseas, local, "local", localServer, overseasServer), nil
 					}
 					cancel()
-					return s.finishBoth(qname, local, overseas, local), nil
+					return s.finishBoth(qname, local, overseas, local, "local", localServer, overseasServer), nil
 				}
 				continue
 			}
 			overseas = r.res.Msg
+			overseasServer = r.res.Server
 			if filtered, ok := s.asnAccepted(overseas); ok {
 				s.log.Debugf("asn accepted overseas response for %s", qname)
 				poison.SetMinTTL(filtered, uint32(optimisticTTL/time.Second))
 				if local == nil {
-					s.completeBothInBackground(ctx, cancel, ch, qname, local, overseas, filtered, key, 2-processed)
-					return s.finishBoth(qname, local, overseas, filtered), nil
+					s.completeBothInBackground(ctx, cancel, ch, qname, local, overseas, filtered, "overseas", localServer, overseasServer, key, 2-processed)
+					return s.finishBoth(qname, local, overseas, filtered, "overseas", localServer, overseasServer), nil
 				}
 				cancel()
-				return s.finishBoth(qname, local, overseas, filtered), nil
+				return s.finishBoth(qname, local, overseas, filtered, "overseas", localServer, overseasServer), nil
 			}
 		case <-ctx.Done():
 			firstErr = ctx.Err()
@@ -298,14 +312,14 @@ func (s *Server) resolveBoth(req *dns.Msg, q dns.Question, key string) (*dns.Msg
 	}
 	cancel()
 	if local != nil && overseas != nil && poison.SimilarIPv4(poison.ExtractIPv4(local), poison.ExtractIPv4(overseas)) {
-		return s.finishBoth(qname, local, overseas, local), nil
+		return s.finishBoth(qname, local, overseas, local, "local", localServer, overseasServer), nil
 	}
 	if overseas != nil {
-		return s.finishBoth(qname, local, overseas, overseas), nil
+		return s.finishBoth(qname, local, overseas, overseas, "overseas", localServer, overseasServer), nil
 	}
 	if local != nil {
 		poison.SetMinTTL(local, uint32(optimisticTTL/time.Second))
-		return s.finishBoth(qname, local, overseas, local), nil
+		return s.finishBoth(qname, local, overseas, local, "local", localServer, overseasServer), nil
 	}
 	if firstErr == nil {
 		firstErr = errors.New("no response from upstream")
@@ -313,7 +327,7 @@ func (s *Server) resolveBoth(req *dns.Msg, q dns.Question, key string) (*dns.Msg
 	return nil, firstErr
 }
 
-func (s *Server) completeBothInBackground(ctx context.Context, cancel context.CancelFunc, ch <-chan upstreamTaggedResult, qname string, local, overseas, selected *dns.Msg, key string, remaining int) {
+func (s *Server) completeBothInBackground(ctx context.Context, cancel context.CancelFunc, ch <-chan upstreamTaggedResult, qname string, local, overseas, selected *dns.Msg, selectedSide, localServer, overseasServer, key string, remaining int) {
 	go func() {
 		defer cancel()
 		for remaining > 0 {
@@ -325,14 +339,16 @@ func (s *Server) completeBothInBackground(ctx context.Context, cancel context.Ca
 				}
 				if r.side == "local" {
 					local = r.res.Msg
+					localServer = r.res.Server
 				} else {
 					overseas = r.res.Msg
+					overseasServer = r.res.Server
 				}
 			case <-ctx.Done():
 				remaining = 0
 			}
 		}
-		final := s.finishBoth(qname, local, overseas, selected)
+		final := s.finishBoth(qname, local, overseas, selected, selectedSide, localServer, overseasServer)
 		if local != nil && overseas != nil && poison.SimilarIPv4(poison.ExtractIPv4(local), poison.ExtractIPv4(overseas)) {
 			final = local
 		}
@@ -342,8 +358,12 @@ func (s *Server) completeBothInBackground(ctx context.Context, cancel context.Ca
 	}()
 }
 
-func (s *Server) finishBoth(qname string, local, overseas, selected *dns.Msg) *dns.Msg {
-	entry := cache.VerdictEntry{Result: "unknown"}
+func (s *Server) finishBoth(qname string, local, overseas, selected *dns.Msg, selectedSide, localServer, overseasServer string) *dns.Msg {
+	entry := cache.VerdictEntry{
+		Result:         "unknown",
+		LocalServer:    localServer,
+		OverseasServer: overseasServer,
+	}
 	if local != nil {
 		entry.LocalIPs = poison.StringsForIPs(poison.ExtractIPv4(local))
 	}
@@ -352,10 +372,8 @@ func (s *Server) finishBoth(qname string, local, overseas, selected *dns.Msg) *d
 	}
 	if local != nil && overseas != nil && poison.SimilarIPv4(poison.ExtractIPv4(local), poison.ExtractIPv4(overseas)) {
 		entry.Result = "same"
-	} else if selected == local {
-		entry.Result = "local"
-	} else if selected == overseas {
-		entry.Result = "overseas"
+	} else if selectedSide != "" {
+		entry.Result = selectedSide
 	}
 	s.verdictCache.Put(qname, entry, 24*time.Hour)
 	return selected

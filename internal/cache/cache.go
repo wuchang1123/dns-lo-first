@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -90,6 +91,44 @@ func (c *ResponseCache) Put(key string, msg *dns.Msg, ttl time.Duration) {
 	c.evictLocked()
 	c.mu.Unlock()
 	_ = c.save()
+}
+
+func (c *ResponseCache) StartJanitor(ctx context.Context, interval, maxAge time.Duration, onClean func(int)) {
+	if interval <= 0 || maxAge <= 0 {
+		return
+	}
+	go func() {
+		c.cleanOlderThan(maxAge, onClean)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				c.cleanOlderThan(maxAge, onClean)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (c *ResponseCache) cleanOlderThan(maxAge time.Duration, onClean func(int)) {
+	cutoff := time.Now().Add(-maxAge)
+	removed := 0
+	c.mu.Lock()
+	for key, entry := range c.items {
+		if !entry.StoredAt.IsZero() && entry.StoredAt.Before(cutoff) {
+			delete(c.items, key)
+			removed++
+		}
+	}
+	c.mu.Unlock()
+	if removed > 0 {
+		_ = c.save()
+		if onClean != nil {
+			onClean(removed)
+		}
+	}
 }
 
 func (c *ResponseCache) evictLocked() {
@@ -280,12 +319,14 @@ type VerdictCache struct {
 }
 
 type VerdictEntry struct {
-	Domain      string    `json:"domain"`
-	LocalIPs    []string  `json:"local_ips"`
-	OverseasIPs []string  `json:"overseas_ips"`
-	Result      string    `json:"result"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Domain         string    `json:"domain"`
+	LocalServer    string    `json:"local_server,omitempty"`
+	OverseasServer string    `json:"overseas_server,omitempty"`
+	LocalIPs       []string  `json:"local_ips"`
+	OverseasIPs    []string  `json:"overseas_ips"`
+	Result         string    `json:"result"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	ExpiresAt      time.Time `json:"expires_at"`
 }
 
 func NewVerdictCache(dir string) (*VerdictCache, error) {

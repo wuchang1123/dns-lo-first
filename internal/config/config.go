@@ -11,13 +11,14 @@ import (
 )
 
 type Config struct {
-	BaseDir      string        `yaml:"base_dir"`
-	BootstrapDNS []string      `yaml:"bootstrap_dns"`
-	Server       Server        `yaml:"server"`
-	Upstream     Upstream      `yaml:"upstream"`
-	LocalDomains LocalDomains  `yaml:"local_domains"`
-	KeySuspect   []DomainGroup `yaml:"key_suspect"`
-	PoisonCheck  PoisonCheck   `yaml:"poison_check"`
+	BaseDir          string           `yaml:"base_dir"`
+	BootstrapDNS     []string         `yaml:"bootstrap_dns"`
+	Server           Server           `yaml:"server"`
+	Upstream         Upstream         `yaml:"upstream"`
+	LocalDomains     LocalDomains     `yaml:"local_domains"`
+	EDNSClientSubnet EDNSClientSubnet `yaml:"edns_client_subnet"`
+	KeySuspect       []DomainGroup    `yaml:"key_suspect"`
+	PoisonCheck      PoisonCheck      `yaml:"poison_check"`
 }
 
 type Server struct {
@@ -46,6 +47,12 @@ type LocalDomains struct {
 	SourceURL      string `yaml:"source_url"`
 	FilePath       string `yaml:"file_path"`
 	UpdateInterval int    `yaml:"update_interval"`
+}
+
+type EDNSClientSubnet struct {
+	Enabled bool   `yaml:"enabled"`
+	IPv4    string `yaml:"ipv4"`
+	IPv6    string `yaml:"ipv6"`
 }
 
 type DomainGroup struct {

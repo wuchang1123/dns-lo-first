@@ -49,10 +49,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	log.StartJanitor(ctx, 48*time.Hour)
 	srv, err := server.New(cfg, log, checker)
 	if err != nil {
 		log.Fatalf("create server failed: %v", err)
 	}
+	srv.StartCacheJanitor(ctx)
 	updater.NewLocalDomainUpdater(cfg, log, srv.ReloadLocalDomains).Start(ctx)
 	if err := srv.ListenAndServe(ctx); err != nil {
 		log.Fatalf("server stopped: %v", err)

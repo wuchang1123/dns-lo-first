@@ -26,6 +26,8 @@ type Client struct {
 	cooldownTTL time.Duration
 	scoreMu     sync.RWMutex
 	latency     map[string]time.Duration
+	ecsMu       sync.RWMutex
+	ecsOptions  []dns.EDNS0
 	log         Logger
 }
 
@@ -59,11 +61,36 @@ func (c *Client) SetLogger(log Logger) {
 	c.log = log
 }
 
+func (c *Client) SetEDNSClientSubnet(enabled bool, ipv4CIDR, ipv6CIDR string) error {
+	c.ecsMu.Lock()
+	defer c.ecsMu.Unlock()
+	c.ecsOptions = nil
+	if !enabled {
+		return nil
+	}
+	if strings.TrimSpace(ipv4CIDR) != "" {
+		opt, err := parseECSOption(ipv4CIDR)
+		if err != nil {
+			return err
+		}
+		c.ecsOptions = append(c.ecsOptions, opt)
+	}
+	if strings.TrimSpace(ipv6CIDR) != "" {
+		opt, err := parseECSOption(ipv6CIDR)
+		if err != nil {
+			return err
+		}
+		c.ecsOptions = append(c.ecsOptions, opt)
+	}
+	return nil
+}
+
 func (c *Client) Query(ctx context.Context, server string, req *dns.Msg) (*dns.Msg, error) {
 	server = strings.TrimSpace(server)
 	if server == "" {
 		return nil, errors.New("empty upstream server")
 	}
+	c.applyEDNSClientSubnet(req)
 	if strings.HasPrefix(server, "https://") || strings.HasPrefix(server, "http://") {
 		return c.queryDoH(ctx, server, req)
 	}
@@ -329,4 +356,64 @@ func (c *Client) queryDoH(ctx context.Context, server string, req *dns.Msg) (*dn
 		return nil, err
 	}
 	return &msg, nil
+}
+
+func parseECSOption(cidr string) (*dns.EDNS0_SUBNET, error) {
+	ip, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+	if err != nil {
+		return nil, fmt.Errorf("parse edns client subnet %q: %w", cidr, err)
+	}
+	ones, bits := network.Mask.Size()
+	if bits != 32 && bits != 128 {
+		return nil, fmt.Errorf("unsupported edns client subnet family for %q", cidr)
+	}
+	if bits == 32 {
+		ip = ip.To4()
+		if ip == nil {
+			return nil, fmt.Errorf("invalid ipv4 edns client subnet %q", cidr)
+		}
+		return &dns.EDNS0_SUBNET{
+			Code:          dns.EDNS0SUBNET,
+			Family:        1,
+			SourceNetmask: uint8(ones),
+			SourceScope:   0,
+			Address:       ip,
+		}, nil
+	}
+	ip = ip.To16()
+	if ip == nil || ip.To4() != nil {
+		return nil, fmt.Errorf("invalid ipv6 edns client subnet %q", cidr)
+	}
+	return &dns.EDNS0_SUBNET{
+		Code:          dns.EDNS0SUBNET,
+		Family:        2,
+		SourceNetmask: uint8(ones),
+		SourceScope:   0,
+		Address:       ip,
+	}, nil
+}
+
+func (c *Client) applyEDNSClientSubnet(req *dns.Msg) {
+	c.ecsMu.RLock()
+	options := append([]dns.EDNS0(nil), c.ecsOptions...)
+	c.ecsMu.RUnlock()
+	if len(options) == 0 || req == nil {
+		return
+	}
+	opt := req.IsEdns0()
+	if opt == nil {
+		opt = new(dns.OPT)
+		opt.Hdr.Name = "."
+		opt.Hdr.Rrtype = dns.TypeOPT
+		opt.SetUDPSize(4096)
+		req.Extra = append(req.Extra, opt)
+	}
+	filtered := opt.Option[:0]
+	for _, option := range opt.Option {
+		if option.Option() == dns.EDNS0SUBNET {
+			continue
+		}
+		filtered = append(filtered, option)
+	}
+	opt.Option = append(filtered, options...)
 }
