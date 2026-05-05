@@ -34,13 +34,17 @@ type Client struct {
 type Logger interface {
 	Debugf(format string, args ...any)
 	Infof(format string, args ...any)
+	Queryf(format string, args ...any)
 	Warnf(format string, args ...any)
+	FormatTime(t time.Time) string
+	FormatClock(t time.Time) string
 }
 
 type Result struct {
-	Server string
-	Msg    *dns.Msg
-	Err    error
+	Server  string
+	Msg     *dns.Msg
+	Elapsed time.Duration
+	Err     error
 }
 
 func New(timeout time.Duration) *Client {
@@ -98,6 +102,7 @@ func (c *Client) Query(ctx context.Context, server string, req *dns.Msg) (*dns.M
 }
 
 func (c *Client) QueryFirst(ctx context.Context, group string, servers []string, req *dns.Msg) Result {
+	callStart := time.Now()
 	if len(servers) == 0 {
 		return Result{Err: errors.New("no upstream servers configured")}
 	}
@@ -108,13 +113,15 @@ func (c *Client) QueryFirst(ctx context.Context, group string, servers []string,
 	first := servers[0]
 	start := time.Now()
 	msg, err := c.Query(ctx, first, req.Copy())
+	elapsed := time.Since(start)
+	c.logUpstreamQuery(group, first, queryName(req), start, elapsed, msg, err)
 	if err == nil && msg != nil {
-		c.recordLatency(group, first, time.Since(start))
-		return Result{Server: first, Msg: msg}
+		c.recordLatency(group, first, elapsed)
+		return Result{Server: first, Msg: msg, Elapsed: time.Since(callStart)}
 	}
 	c.freezeIfTimeout(group, first, err)
 	if len(servers) == 1 {
-		return Result{Server: first, Err: err}
+		return Result{Server: first, Elapsed: time.Since(callStart), Err: err}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -127,22 +134,26 @@ func (c *Client) QueryFirst(ctx context.Context, group string, servers []string,
 		go func() {
 			start := time.Now()
 			msg, err := c.Query(ctx, server, req.Copy())
+			elapsed := time.Since(start)
+			c.logUpstreamQuery(group, server, queryName(req), start, elapsed, msg, err)
 			if err == nil && msg != nil {
-				c.recordLatency(group, server, time.Since(start))
+				c.recordLatency(group, server, elapsed)
 			}
 			c.freezeIfTimeout(group, server, err)
-			ch <- Result{Server: server, Msg: msg, Err: err}
+			ch <- Result{Server: server, Msg: msg, Elapsed: elapsed, Err: err}
 		}()
 	}
-	last := Result{Server: first, Err: err}
+	last := Result{Server: first, Elapsed: elapsed, Err: err}
 	for range rest {
 		r := <-ch
 		if r.Err == nil && r.Msg != nil {
 			cancel()
+			r.Elapsed = time.Since(callStart)
 			return r
 		}
 		last = r
 	}
+	last.Elapsed = time.Since(callStart)
 	return last
 }
 
@@ -201,15 +212,15 @@ func (c *Client) recordLatency(group, server string, latency time.Duration) {
 	c.scoreMu.Unlock()
 
 	if oldScore != newScore || current != next {
-		c.logDebugf(
-			"upstream score updated group=%s server=%s latency=%s avg_latency=%s score=%d old_score=%d",
-			normalizeGroup(group),
-			server,
-			latency,
-			next,
-			newScore,
-			oldScore,
-		)
+		// c.logDebugf(
+		// 	"upstream score updated group=%s server=%s latency=%s avg_latency=%s score=%d old_score=%d",
+		// 	normalizeGroup(group),
+		// 	server,
+		// 	latency,
+		// 	next,
+		// 	newScore,
+		// 	oldScore,
+		// )
 	}
 }
 
@@ -289,6 +300,40 @@ func (c *Client) logWarnf(format string, args ...any) {
 	if c.log != nil {
 		c.log.Warnf(format, args...)
 	}
+}
+
+func (c *Client) logUpstreamQuery(group, server, qname string, start time.Time, elapsed time.Duration, msg *dns.Msg, err error) {
+	if c.log == nil {
+		return
+	}
+	status := "OK"
+	if msg != nil && msg.Rcode != dns.RcodeSuccess {
+		status = dns.RcodeToString[msg.Rcode]
+	}
+	if err != nil {
+		status = err.Error()
+	}
+	c.log.Queryf(
+		"%s UPSTREAM %s %s %s %s %s %s",
+		formatDurationMS(elapsed),
+		qname,
+		normalizeGroup(group),
+		server,
+		c.log.FormatClock(start),
+		c.log.FormatClock(start.Add(elapsed)),
+		status,
+	)
+}
+
+func queryName(req *dns.Msg) string {
+	if req == nil || len(req.Question) == 0 {
+		return "-"
+	}
+	return req.Question[0].Name
+}
+
+func formatDurationMS(d time.Duration) string {
+	return fmt.Sprintf("%.3fms", float64(d)/float64(time.Millisecond))
 }
 
 func isTimeout(err error) bool {

@@ -164,6 +164,8 @@ suffixes:
   org: google
 - suffix: youtube-nocookie.com
   org: google
+- suffix: dns.google 
+  org: google
 - suffix: cloudflare.com
   org: cloudflare
 - suffix: cloudflare.net

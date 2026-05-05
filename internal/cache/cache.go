@@ -21,9 +21,10 @@ type ResponseCache struct {
 }
 
 type ResponseEntry struct {
-	Msg       []byte
-	ExpiresAt time.Time
-	StoredAt  time.Time
+	Msg            []byte
+	UpstreamServer string
+	ExpiresAt      time.Time
+	StoredAt       time.Time
 }
 
 type responseDiskEntry struct {
@@ -35,6 +36,7 @@ type responseDiskEntry struct {
 	Answer             []string        `json:"answer,omitempty"`
 	Authority          []string        `json:"authority,omitempty"`
 	Additional         []string        `json:"additional,omitempty"`
+	UpstreamServer     string          `json:"upstream_server,omitempty"`
 	ExpiresAt          time.Time       `json:"expires_at"`
 	StoredAt           time.Time       `json:"stored_at"`
 }
@@ -62,21 +64,25 @@ func ResponseKey(q dns.Question) string {
 	return strings.ToLower(strings.TrimSuffix(q.Name, ".")) + "|" + dns.TypeToString[q.Qtype] + "|" + dns.ClassToString[q.Qclass]
 }
 
-func (c *ResponseCache) Get(key string) (*dns.Msg, bool, bool) {
+func (c *ResponseCache) Get(key string) (*dns.Msg, string, bool, bool) {
 	c.mu.RLock()
 	e, ok := c.items[key]
 	c.mu.RUnlock()
 	if !ok {
-		return nil, false, false
+		return nil, "", false, false
 	}
 	var msg dns.Msg
 	if err := msg.Unpack(e.Msg); err != nil {
-		return nil, false, false
+		return nil, "", false, false
 	}
-	return &msg, true, time.Now().Before(e.ExpiresAt)
+	return &msg, e.UpstreamServer, true, time.Now().Before(e.ExpiresAt)
 }
 
 func (c *ResponseCache) Put(key string, msg *dns.Msg, ttl time.Duration) {
+	c.PutWithServer(key, msg, ttl, "")
+}
+
+func (c *ResponseCache) PutWithServer(key string, msg *dns.Msg, ttl time.Duration, upstreamServer string) {
 	if msg == nil {
 		return
 	}
@@ -87,7 +93,7 @@ func (c *ResponseCache) Put(key string, msg *dns.Msg, ttl time.Duration) {
 	}
 	now := time.Now()
 	c.mu.Lock()
-	c.items[key] = ResponseEntry{Msg: packed, StoredAt: now, ExpiresAt: now.Add(ttl)}
+	c.items[key] = ResponseEntry{Msg: packed, UpstreamServer: upstreamServer, StoredAt: now, ExpiresAt: now.Add(ttl)}
 	c.evictLocked()
 	c.mu.Unlock()
 	_ = c.save()
@@ -197,6 +203,7 @@ func (e ResponseEntry) toDiskEntry() (responseDiskEntry, error) {
 		Rcode:              dns.RcodeToString[msg.Rcode],
 		Authoritative:      msg.Authoritative,
 		RecursionAvailable: msg.RecursionAvailable,
+		UpstreamServer:     e.UpstreamServer,
 		StoredAt:           e.StoredAt,
 		ExpiresAt:          e.ExpiresAt,
 	}
@@ -215,7 +222,7 @@ func (e ResponseEntry) toDiskEntry() (responseDiskEntry, error) {
 
 func (e responseDiskEntry) toMemoryEntry() (ResponseEntry, error) {
 	if len(e.Msg) > 0 {
-		return ResponseEntry{Msg: e.Msg, StoredAt: e.StoredAt, ExpiresAt: e.ExpiresAt}, nil
+		return ResponseEntry{Msg: e.Msg, UpstreamServer: e.UpstreamServer, StoredAt: e.StoredAt, ExpiresAt: e.ExpiresAt}, nil
 	}
 	msg := &dns.Msg{}
 	msg.Response = true
@@ -243,7 +250,7 @@ func (e responseDiskEntry) toMemoryEntry() (ResponseEntry, error) {
 	if err != nil {
 		return ResponseEntry{}, err
 	}
-	return ResponseEntry{Msg: packed, StoredAt: e.StoredAt, ExpiresAt: e.ExpiresAt}, nil
+	return ResponseEntry{Msg: packed, UpstreamServer: e.UpstreamServer, StoredAt: e.StoredAt, ExpiresAt: e.ExpiresAt}, nil
 }
 
 func rrStrings(rrs []dns.RR) []string {

@@ -23,6 +23,9 @@ const (
 	Fatal
 )
 
+const logTimeLayout = "06-01-02 15:04:05.000"
+const logClockLayout = "15:04:05.000"
+
 type Logger struct {
 	mu        sync.Mutex
 	queryMu   sync.Mutex
@@ -90,8 +93,15 @@ func (l *Logger) Fatalf(format string, args ...any) {
 func (l *Logger) Queryf(format string, args ...any) {
 	l.queryMu.Lock()
 	defer l.queryMu.Unlock()
-	now := time.Now().In(l.loc).Format("2006-01-02 15:04:05")
-	l.queryLog.Printf("%s %s", now, fmt.Sprintf(format, args...))
+	l.queryLog.Printf("%s %s", l.FormatTime(time.Now()), fmt.Sprintf(format, args...))
+}
+
+func (l *Logger) FormatTime(t time.Time) string {
+	return t.In(l.loc).Format(logTimeLayout)
+}
+
+func (l *Logger) FormatClock(t time.Time) string {
+	return t.In(l.loc).Format(logClockLayout)
 }
 
 func (l *Logger) StartJanitor(ctx context.Context, maxAge time.Duration) {
@@ -123,13 +133,13 @@ func (l *Logger) cleanOldLogs(maxAge time.Duration) {
 	cutoff := time.Now().In(l.loc).Add(-maxAge)
 	l.mu.Lock()
 	if removed, err := trimLogFile(filepath.Join(l.dir, "lo-first.log"), cutoff, l.loc); err == nil && removed > 0 {
-		l.log.Printf("%s [info] cleaned log file=lo-first.log removed=%d max_age=%s", time.Now().In(l.loc).Format("2006-01-02 15:04:05"), removed, maxAge)
+		l.log.Printf("%s [info] cleaned log file=lo-first.log removed=%d max_age=%s", l.FormatTime(time.Now()), removed, maxAge)
 	}
 	l.mu.Unlock()
 
 	l.queryMu.Lock()
 	if removed, err := trimLogFile(filepath.Join(l.dir, "query.log"), cutoff, l.loc); err == nil && removed > 0 {
-		l.log.Printf("%s [info] cleaned log file=query.log removed=%d max_age=%s", time.Now().In(l.loc).Format("2006-01-02 15:04:05"), removed, maxAge)
+		l.log.Printf("%s [info] cleaned log file=query.log removed=%d max_age=%s", l.FormatTime(time.Now()), removed, maxAge)
 	}
 	l.queryMu.Unlock()
 }
@@ -140,8 +150,7 @@ func (l *Logger) printf(level Level, label, format string, args ...any) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := time.Now().In(l.loc).Format("2006-01-02 15:04:05")
-	l.log.Printf("%s [%s] %s", now, label, fmt.Sprintf(format, args...))
+	l.log.Printf("%s [%s] %s", l.FormatTime(time.Now()), label, fmt.Sprintf(format, args...))
 }
 
 func parseLevel(level string) Level {
@@ -203,12 +212,14 @@ func trimLogFile(path string, cutoff time.Time, loc *time.Location) (int, error)
 }
 
 func isOldLogLine(line string, cutoff time.Time, loc *time.Location) bool {
-	if len(line) < len("2006-01-02 15:04:05") {
-		return false
+	for _, layout := range []string{logTimeLayout, "2006-01-02 15:04:05"} {
+		if len(line) < len(layout) {
+			continue
+		}
+		t, err := time.ParseInLocation(layout, line[:len(layout)], loc)
+		if err == nil {
+			return t.Before(cutoff)
+		}
 	}
-	t, err := time.ParseInLocation("2006-01-02 15:04:05", line[:len("2006-01-02 15:04:05")], loc)
-	if err != nil {
-		return false
-	}
-	return t.Before(cutoff)
+	return false
 }
