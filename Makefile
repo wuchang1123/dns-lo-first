@@ -1,60 +1,27 @@
-APP := lo-first
-PKG := ./cmd/lo-first
-BIN_DIR := bin
-GO ?= go
+BINARY := dns-lo-first
+MAIN := ./cmd/lo-first
+BUILD_DIR := build
 
-GO_BUILD_ENV := CGO_ENABLED=0 GOTOOLCHAIN=local
-GO_BUILD_FLAGS := -trimpath -ldflags "-s -w"
-
-.PHONY: all build build-all test clean \
-	darwin-amd64 darwin-arm64 \
-	linux-amd64 linux-arm64 linux-armv7 \
-	windows-amd64 windows-arm64
-
-all: test build
+.PHONY: build openwrt run test clean install-openwrt
 
 build:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP) $(PKG)
+	mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY) $(MAIN)
 
-build-all: darwin-amd64 darwin-arm64 linux-amd64 linux-arm64 linux-armv7 windows-amd64 windows-arm64
+openwrt:
+	mkdir -p $(BUILD_DIR)/openwrt-x86_64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o $(BUILD_DIR)/openwrt-x86_64/$(BINARY) $(MAIN)
 
-build-linux: linux-amd64 linux-arm64 linux-armv7
-
-build-windows: windows-amd64 windows-arm64
-
-build-macos: darwin-amd64 darwin-arm64
+run:
+	go run $(MAIN) -config config.yaml
 
 test:
-	$(GO_BUILD_ENV) $(GO) test ./...
+	go test ./...
 
 clean:
-	rm -rf $(BIN_DIR)
+	rm -rf $(BUILD_DIR)
 
-darwin-amd64:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=darwin GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-darwin-amd64 $(PKG)
-
-darwin-arm64:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=darwin GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-darwin-arm64 $(PKG)
-
-linux-amd64:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=linux GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-linux-amd64 $(PKG)
-
-linux-arm64:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=linux GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-linux-arm64 $(PKG)
-
-linux-armv7:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=linux GOARCH=arm GOARM=7 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-linux-armv7 $(PKG)
-
-windows-amd64:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=windows GOARCH=amd64 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-windows-amd64.exe $(PKG)
-
-windows-arm64:
-	@mkdir -p $(BIN_DIR)
-	$(GO_BUILD_ENV) GOOS=windows GOARCH=arm64 $(GO) build $(GO_BUILD_FLAGS) -o $(BIN_DIR)/$(APP)-windows-arm64.exe $(PKG)
+install-openwrt: openwrt
+	install -Dm755 $(BUILD_DIR)/openwrt-x86_64/$(BINARY) /usr/bin/$(BINARY)
+	install -Dm644 config.yaml /etc/dns-lo-first/config.yaml
+	install -Dm755 openwrt/dns-lo-first.init /etc/init.d/dns-lo-first

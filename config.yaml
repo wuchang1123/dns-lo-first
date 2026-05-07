@@ -1,99 +1,121 @@
-# DNS服务器配置
-# 基础目录，默认当前目录
-base_dir: "."
+# DNS 服务器配置
+# 目标部署环境：OpenWrt x86_64。
+# OpenWrt 服务启动目录不固定，生产环境优先使用绝对路径。
 
-# 下载配置解析域名时使用的递归 DNS（Do53，host:port）。
-# 本服务刚启动时系统 resolv 可能不可用（如指向 [::1]:53），此处显式指定可避免依赖本机解析。
-# 留空则使用下方 upstream 中非回环地址；若仍为空则内置 223.5.5.5 / 8.8.8.8 / 1.1.1.1。
-bootstrap_dns:
-  - "223.5.5.5:53"
-  - "8.8.8.8:53"
+base_dir: "/etc/dns-lo-first"
 
 server:
-  # 监听地址
+  # 默认使用 5355，避免和 OpenWrt 自带 dnsmasq 的 53 端口冲突。
   listen: ":5355"
-  # 域名的默认 TTL 时间（秒）
+
+  # 正常响应写入基础缓存时使用的默认 TTL（秒）。
   domain_ttl: 60
-  # 本地+海外并发查询等待窗口（秒）
+
+  # 默认并发查询的总等待窗口（秒）。
   concurrent_timeout: 6
-  # 日志时区
+
+  # 单个上游请求超时（秒）。
+  upstream_timeout: 3
+
+  # 单个上游超时后的冻结时间（秒）。
+  upstream_freeze_duration: 60
+
+  # 日志目录路径。
+  log_path: "/var/log/dns-lo-first"
+
+  # 缓存目录路径。不要放在 /tmp，OpenWrt 上 /tmp 通常是内存文件系统。
+  cache_path: "/var/cache/dns-lo-first"
+
+  # 日志时区。
   log_timezone: "Asia/Shanghai"
-  # 日志等级: debug, info, warn, error, fatal
+
+  # 日志等级：debug, info, warn, error, fatal。
   log_level: "info"
-  # 日志目录路径（支持相对/绝对路径）
-  log_path: "./log"
-  # 缓存目录路径（支持相对/绝对路径）
-  cache_path: "./cache"
-  # 缓存大小
-  cache_size: 10000
 
-# 上游DNS服务器
+cache:
+  # 基础响应缓存。
+  response:
+    enabled: true
+    memory_size: 10000
+    stale_ttl: 3
+    cleanup_after_hours: 48
+
+  # 校对结论缓存。
+  comparison:
+    enabled: true
+    ttl_hours: 168
+
+  # ASN 检查失败但仍需要返回时使用的短 TTL。
+  suspect_ttl: 30
+
+# 下载规则、解析 DoH 域名时使用的递归 DNS。
+# 只支持 Do53，格式为 host:port；不要配置 DoH，避免启动阶段形成解析循环。
+bootstrap_dns:
+  - "223.5.5.5:53"
+  - "119.29.29.29:53"
+  - "8.8.8.8:53"
+  - "1.1.1.1:53"
+
 upstream:
+  # Do53 使用 host:port；DoH 使用 HTTPS URL。
+  # 同一类里可以混合 Do53 和 DoH，按配置顺序选择，超时后尝试剩余上游。
   servers:
-    # 本地 DNS 服务器（国内）
     local:
-      - "223.5.5.5:53"      # 阿里云DNS
-      #- "223.6.6.6:53"      # 阿里云DNS备用
-      #- "114.114.114.114:53" # 114DNS
-    
-    # 海外 DNS 服务器
-    overseas:
-      - "8.8.8.8:53"        # Google DNS
-      - "8.8.4.4:53"        # Google DNS备用
-      - "1.1.1.1:53"        # Cloudflare DNS
-      
-  # 默认所有域名使用本地和海外 DNS 上游服务器
+      - "223.5.5.5:53"                    # 阿里云 DNS Do53
+      - "119.29.29.29:53"                 # DNSPod Do53
+      - "https://dns.alidns.com/dns-query" # 阿里云 DNS DoH
+      - "https://doh.pub/dns-query"        # DNSPod DoH
 
-  # 只使用本地 DNS 服务器
-  # 外国域名写入这里的话，会走本地 DNS
+    overseas:
+      - "8.8.8.8:53"                               # Google DNS Do53
+      - "1.1.1.1:53"                               # Cloudflare DNS Do53
+      - "https://dns.google/dns-query"             # Google DNS DoH
+      - "https://cloudflare-dns.com/dns-query"     # Cloudflare DNS DoH
+      - "https://dns.quad9.net/dns-query"          # Quad9 DoH
+
+  # 上游评分。Do53 和 DoH 合并统计，只按具体上游地址区分。
+  scoring:
+    enabled: true
+    initial_score: 100
+    latency_window: 20
+    success_weight: 10
+    failure_penalty: 25
+    timeout_penalty: 50
+    consecutive_failure_penalty: 15
+    latency_penalty_per_100ms: 2
+    min_score: 0
+    max_score: 1000
+    low_score_probe_interval: "1h"
+    same_score_random: true
+
+  # 分流优先级：overseas_only > local_only > local_domains > 默认并发。
   local_only:
     - "ntp.org"
-  # 只使用海外 DNS 上游服务器
+
   overseas_only:
     - "googlevideo.com"
     - "ytimg.com"
     - "ggpht.com"
 
-# 所在国域名列表配置
-# 只使用本地 DNS 上游服务器
+  # EDNS Client Subnet 固定配置；关闭时不向上游发送 ECS。
+  # 示例：ipv4: "0.0.0.0/0" 表示匿名 ECS；也可填固定网段如 "1.2.3.0/24"。
+  edns_client_subnet:
+    enabled: false
+    ipv4: "0.0.0.0/0"
+    ipv6: ""
+
+# 所在国域名列表。命中的域名只使用本地 DNS 上游服务器。
 local_domains:
-  # 数据源URL
   source_url: "https://raw.githubusercontent.com/wuchang1123/cn-dns-conf/refs/heads/main/out/dnsmasq-china.conf"
-  # 本地文件路径
-  file_path: "./data/china_domains.txt"
-  # 更新间隔（小时）
-  update_interval: 24
+  file_path: "/etc/dns-lo-first/data/china_domains.txt"
+  update_interval_hours: 24
 
-# EDNS Client Subnet 固定配置；关闭时不向上游发送 ECS。
-# 示例：ipv4: "0.0.0.0/0" 表示匿名 ECS；也可填固定网段如 "1.2.3.0/24"。
-edns_client_subnet:
-  enabled: false
-  ipv4: "202.96.128.0/24"
-  ipv6: ""
-
-# 重点嫌疑域名
-key_suspect:
-  - domains:
-    - "google.com"
-    - "youtube.com"
-    - "facebook.com"
-    - "twitter.com"
-    - "instagram.com"
-    - "linkedin.com"
-    - "github.com"
-    - "gitlab.com"
-  
-
-# 病毒识别系统配置
-poison_check:
-  # 是否启用
+asn:
   enabled: true
-  # TLS连接超时（秒）
-  tls_timeout: 5
-  # 并发校验数量
-  concurrent_checks: 10
-  # 校验端口
-  tls_port: 443
-  # 是否启用ASN判断
-  asn_enabled: true
-  asn_file_path: "./data/domain_asn.yaml"
+  file_path: "/etc/dns-lo-first/data/domain_asn.yaml"
+
+comparison:
+  # 默认校对比较使用 IP 交集和 ASN/组织一致。
+  # /24 和 /16 作为弱一致信号，用于兼容 CDN 调度差异。
+  allow_same_24_as_weak_match: true
+  allow_same_16_match: true
