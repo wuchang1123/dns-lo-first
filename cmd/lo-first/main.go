@@ -1373,7 +1373,11 @@ func (u *upstreamClient) logUpstream(group, server string, req *dns.Msg, start t
 	if len(req.Question) > 0 {
 		qname = req.Question[0].Name
 	}
-	u.log.Queryf("%s UPSTREAM %s %s %s %s %s %s", formatDurationMS(elapsed), qname, group, server, u.log.formatClock(start), u.log.formatClock(start.Add(elapsed)), status)
+	ips := "-"
+	if err == nil && msg != nil {
+		ips = formatIPs(extractIPv4(msg))
+	}
+	u.log.Queryf("%s UPSTREAM %s %s %s %s %s %s %s", formatDurationMS(elapsed), qname, group, server, u.log.formatClock(start), u.log.formatClock(start.Add(elapsed)), status, ips)
 }
 
 type bootstrapResolver struct {
@@ -1645,12 +1649,9 @@ func (s *dnsServer) resolveDefault(ctx context.Context, req *dns.Msg, key string
 	known := s.asnKnown(req)
 	ch := make(chan sideResult, 2)
 	go func() {
-		if known {
-			r, last := s.upstream.QueryValidated(ctx, groupLocal, s.cfg.Upstream.Servers.Local, req, s.asnFilter)
-			ch <- sideResult{side: groupLocal, res: r, last: last}
-			return
-		}
-		ch <- sideResult{side: groupLocal, res: s.upstream.QueryFirst(ctx, groupLocal, s.cfg.Upstream.Servers.Local, req)}
+		// ASN 校验失败后的「并发重试」只对海外上游；本地侧不因 ASN 失败扫全部本地上游。
+		r := s.upstream.QueryFirst(ctx, groupLocal, s.cfg.Upstream.Servers.Local, req)
+		ch <- sideResult{side: groupLocal, res: r, last: r}
 	}()
 	go func() {
 		if known {
