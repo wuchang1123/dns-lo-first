@@ -1,49 +1,24 @@
-.PHONY: all linux linux-arm64 linux-arm macos macos-amd64 clean install uninstall
+BINARY := dns-lo-first
+BUILD_DIR := build
 
-# 编译所有平台
-all: linux linux-arm64 linux-arm macos macos-amd64
+.PHONY: build run test tidy clean openwrt
 
-# Linux AMD64
-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/lo/lo-first-linux-amd64 ./cmd/lo-first/
-	@echo "已编译 Linux AMD64: bin/lo/lo-first-linux-amd64"
+build:
+	mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(BUILD_DIR)/$(BINARY) ./cmd/dns-lo-first
 
-# Linux ARM64
-linux-arm64:
-	GOOS=linux GOARCH=arm64 go build -o bin/lo/lo-first-linux-arm64 ./cmd/lo-first/
-	@echo "已编译 Linux ARM64: bin/lo/lo-first-linux-arm64"
+openwrt:
+	mkdir -p $(BUILD_DIR)/openwrt-x86_64
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o $(BUILD_DIR)/openwrt-x86_64/$(BINARY) ./cmd/dns-lo-first
 
-# Linux ARMv7
-linux-arm:
-	GOOS=linux GOARCH=arm GOARM=7 go build -o bin/lo/lo-first-linux-armv7 ./cmd/lo-first/
-	@echo "已编译 Linux ARMv7: bin/lo/lo-first-linux-armv7"
+run:
+	go run ./cmd/dns-lo-first -config config.yaml
 
-# macOS ARM64 (Apple Silicon)
-macos:
-	GOOS=darwin GOARCH=arm64 go build -o bin/lo/lo-first-darwin-arm64 ./cmd/lo-first/
-	@echo "已编译 macOS ARM64: bin/lo/lo-first-darwin-arm64"
+test:
+	go test ./...
 
-# macOS AMD64 (Intel)
-macos-amd64:
-	GOOS=darwin GOARCH=amd64 go build -o bin/lo/lo-first-darwin-amd64 ./cmd/lo-first/
-	@echo "已编译 macOS AMD64: bin/lo/lo-first-darwin-amd64"
+tidy:
+	go mod tidy
 
-# 清理编译产物
 clean:
-	rm -f bin/lo/lo-first*
-	@echo "已清理编译产物"
-
-# 默认编译当前平台
-default:
-	go build -o bin/lo/lo-first ./cmd/lo-first/
-	@echo "已编译当前平台: bin/lo/lo-first"
-
-# 安装服务（需要 root 权限）
-install:
-	@chmod +x scripts/install.sh scripts/uninstall.sh
-	@sudo scripts/install.sh
-
-# 卸载服务（需要 root 权限）
-uninstall:
-	@chmod +x scripts/install.sh scripts/uninstall.sh
-	@sudo scripts/uninstall.sh
+	rm -rf $(BUILD_DIR)

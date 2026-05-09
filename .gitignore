@@ -1,6 +1,11 @@
 .DS_Store
 *.log
 *.tmp
+/build/
+/logs/
+/.gocache/
+/.gomodcache/
+/.gopath/
 /bin/lo/*
 /cache/*
 #/data/*
