@@ -18,9 +18,14 @@ type dnsServer struct {
 	upstreams     *upstreamManager
 	responseCache *responseCache
 	resultCache   *resultCache
+	asnDB         *asnDB
+	rep           *reputationStore
 	localOnly     *matcher
 	localDomains  *matcher
 	domainMu      sync.RWMutex
+
+	refreshMu       sync.Mutex
+	refreshInflight map[string]struct{}
 }
 
 func newDNSServer(cfg *runtimeConfig, log *logger) (*dnsServer, error) {
@@ -59,7 +64,21 @@ func newDNSServer(cfg *runtimeConfig, log *logger) (*dnsServer, error) {
 	}
 	log.Infof("doh_bootstrap_dns effective count=%d", len(dohBootstrap))
 
-	upstreams, err := newUpstreamManager(cfg, log, bootstrap, dohBootstrap)
+	rep, err := newReputationStore(cfg.Reputation.FilePath, cfg.Reputation.Enabled, cfg.Reputation.Delta, cfg.Reputation.Min, cfg.Reputation.Max, log)
+	if err != nil {
+		return nil, err
+	}
+	asnDB, err := loadASNDB(cfg.ASN.FilePath, cfg.ASN.Enabled)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.ASN.Enabled {
+		log.Infof("asn check enabled file=%s", cfg.ASN.FilePath)
+	} else {
+		log.Infof("asn check disabled")
+	}
+
+	upstreams, err := newUpstreamManager(cfg, log, bootstrap, dohBootstrap, rep)
 	if err != nil {
 		return nil, err
 	}
@@ -74,13 +93,16 @@ func newDNSServer(cfg *runtimeConfig, log *logger) (*dnsServer, error) {
 	}
 
 	s := &dnsServer{
-		cfg:           cfg,
-		log:           log,
-		upstreams:     upstreams,
-		responseCache: responseCache,
-		resultCache:   resultCache,
-		localOnly:     localOnly,
-		localDomains:  localDomains,
+		cfg:             cfg,
+		log:             log,
+		upstreams:       upstreams,
+		responseCache:   responseCache,
+		resultCache:     resultCache,
+		asnDB:           asnDB,
+		rep:             rep,
+		localOnly:       localOnly,
+		localDomains:    localDomains,
+		refreshInflight: make(map[string]struct{}),
 	}
 	go s.startLocalDomainUpdater(localFileMissing)
 	go cleanupLogs(cfg.Log.Dir, cfg.Log.CleanupHours, log)
@@ -134,14 +156,30 @@ func (s *dnsServer) resolve(req *dns.Msg) *dns.Msg {
 
 	if cached, expired, ok := s.responseCache.Get(key, req); ok {
 		if expired {
-			reqCopy := req.Copy()
-			go func() {
-				_ = s.resolveFresh(reqCopy)
-			}()
+			s.startRefreshOnce(key, req.Copy())
 		}
 		return cached
 	}
 	return s.resolveFresh(req)
+}
+
+func (s *dnsServer) startRefreshOnce(key string, req *dns.Msg) {
+	s.refreshMu.Lock()
+	if _, ok := s.refreshInflight[key]; ok {
+		s.refreshMu.Unlock()
+		return
+	}
+	s.refreshInflight[key] = struct{}{}
+	s.refreshMu.Unlock()
+
+	go func() {
+		defer func() {
+			s.refreshMu.Lock()
+			delete(s.refreshInflight, key)
+			s.refreshMu.Unlock()
+		}()
+		_ = s.resolveFresh(req)
+	}()
 }
 
 func (s *dnsServer) resolveNoCache(req *dns.Msg) *dns.Msg {
@@ -149,14 +187,16 @@ func (s *dnsServer) resolveNoCache(req *dns.Msg) *dns.Msg {
 	defer cancel()
 	qname := strings.ToLower(req.Question[0].Name)
 	if s.localOnly.Match(qname) || s.matchLocalDomain(qname) {
-		msg, _, err := s.upstreams.Query(ctx, categoryLocal, req)
+		msg, upstream, err := s.upstreams.Query(ctx, categoryLocal, req, orderByScore)
 		if err == nil && msg != nil {
+			s.asnCheckAndUpdate(qname, upstream, msg)
 			return msg
 		}
 		return servfail(req)
 	}
-	msg, _, err := s.upstreams.Query(ctx, categoryOverseas, req)
+	msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req, orderByScore)
 	if err == nil && msg != nil {
+		s.asnCheckAndUpdate(qname, upstream, msg)
 		return msg
 	}
 	return servfail(req)
@@ -168,20 +208,22 @@ func (s *dnsServer) resolveFresh(req *dns.Msg) *dns.Msg {
 	qname := strings.ToLower(req.Question[0].Name)
 
 	if s.localOnly.Match(qname) || s.matchLocalDomain(qname) {
-		msg, upstream, err := s.upstreams.Query(ctx, categoryLocal, req)
+		msg, upstream, err := s.upstreams.Query(ctx, categoryLocal, req, orderByScore)
 		if err != nil || msg == nil {
 			return servfail(req)
 		}
+		s.asnCheckAndUpdate(qname, upstream, msg)
 		s.storeBasic(req, msg, upstream)
 		return msg
 	}
 
 	key := makeKey(req.Question[0])
 	if !s.resultCache.Exists(key) {
-		msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req)
+		msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req, orderByScore)
 		if err != nil || msg == nil {
 			return servfail(req)
 		}
+		s.asnCheckAndUpdate(qname, upstream, msg)
 		s.storeBasic(req, msg, upstream)
 		s.storeResult(key, msg)
 		return msg
@@ -199,11 +241,11 @@ type routeResult struct {
 func (s *dnsServer) resolveWithResultCache(ctx context.Context, req *dns.Msg, key string) *dns.Msg {
 	ch := make(chan routeResult, 2)
 	go func() {
-		msg, upstream, err := s.upstreams.Query(ctx, categoryLocal, req)
+		msg, upstream, err := s.upstreams.Query(ctx, categoryLocal, req, orderByReputation)
 		ch <- routeResult{msg: msg, upstream: upstream, err: err, category: categoryLocal}
 	}()
 	go func() {
-		msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req)
+		msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req, orderByReputation)
 		ch <- routeResult{msg: msg, upstream: upstream, err: err, category: categoryOverseas}
 	}()
 
@@ -221,11 +263,13 @@ func (s *dnsServer) resolveWithResultCache(ctx context.Context, req *dns.Msg, ke
 				continue
 			}
 			if res.category == categoryOverseas {
+				s.asnCheckAndUpdate(strings.ToLower(req.Question[0].Name), res.upstream, res.msg)
 				s.storeBasic(req, res.msg, res.upstream)
 				s.storeResult(key, res.msg)
 				return res.msg
 			}
 			localResp = &res
+			s.asnCheckAndUpdate(strings.ToLower(req.Question[0].Name), res.upstream, res.msg)
 			if hasA(res.msg) && s.resultCache.Consistent(key, extractA(res.msg)) {
 				setAllTTL(res.msg, uint32(s.cfg.staleTTL.Seconds()))
 				go s.refreshOverseasAndStore(req.Copy(), key)
@@ -245,11 +289,35 @@ func (s *dnsServer) refreshOverseasAndStore(req *dns.Msg, key string) {
 	defer cancel()
 	// Must use Query (not queryCategory) so this joins the same singleflight as the
 	// concurrent overseas goroutine started in resolveWithResultCache.
-	msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req)
+	msg, upstream, err := s.upstreams.Query(ctx, categoryOverseas, req, orderByReputation)
 	if err == nil && msg != nil {
+		s.asnCheckAndUpdate(strings.ToLower(req.Question[0].Name), upstream, msg)
 		s.storeBasic(req, msg, upstream)
 		s.storeResult(key, msg)
 	}
+}
+
+func (s *dnsServer) asnCheckAndUpdate(qname, upstream string, msg *dns.Msg) {
+	if s.asnDB == nil || !s.asnDB.enabled || s.rep == nil || !s.rep.enabled {
+		return
+	}
+	if msg == nil || msg.Rcode != dns.RcodeSuccess {
+		return
+	}
+	ips := extractA(msg)
+	if len(ips) == 0 {
+		return
+	}
+	polluted, org, err := s.asnDB.polluted(qname, ips)
+	if err != nil {
+		return
+	}
+	if polluted {
+		s.log.Warnf("ASN polluted qname=%s org=%s upstream=%s ips=%s", qname, org, upstream, strings.Join(ips, ","))
+		s.rep.adjust(upstream, false)
+		return
+	}
+	s.rep.adjust(upstream, true)
 }
 
 func (s *dnsServer) storeBasic(req, msg *dns.Msg, upstream string) {

@@ -17,7 +17,18 @@ type config struct {
 	} `yaml:"server"`
 	BootstrapDNS    []string `yaml:"bootstrap_dns"`
 	DoHBootstrapDNS []string `yaml:"doh_bootstrap_dns"`
-	Upstream        struct {
+	ASN             struct {
+		Enabled  bool   `yaml:"enabled"`
+		FilePath string `yaml:"file_path"`
+	} `yaml:"asn"`
+	Reputation struct {
+		Enabled  bool   `yaml:"enabled"`
+		FilePath string `yaml:"file_path"`
+		Delta    int    `yaml:"delta"`
+		Min      int    `yaml:"min"`
+		Max      int    `yaml:"max"`
+	} `yaml:"reputation"`
+	Upstream struct {
 		Timeout               string `yaml:"timeout"`
 		FreezeDuration        string `yaml:"freeze_duration"`
 		LowScoreProbeInterval string `yaml:"low_score_probe_interval"`
@@ -133,6 +144,19 @@ func applyDefaults(cfg *runtimeConfig) {
 	}
 	if cfg.Server.Timezone == "" {
 		cfg.Server.Timezone = "Asia/Shanghai"
+	}
+	if cfg.ASN.FilePath == "" {
+		cfg.ASN.FilePath = "./data/domain_asn.yaml"
+	}
+	if cfg.Reputation.FilePath == "" {
+		cfg.Reputation.FilePath = "./cache/reputation.json"
+	}
+	if cfg.Reputation.Delta == 0 {
+		cfg.Reputation.Delta = 1
+	}
+	if cfg.Reputation.Min == 0 && cfg.Reputation.Max == 0 {
+		cfg.Reputation.Min = -100
+		cfg.Reputation.Max = 100
 	}
 	if cfg.Upstream.Timeout == "" {
 		cfg.Upstream.Timeout = "3s"

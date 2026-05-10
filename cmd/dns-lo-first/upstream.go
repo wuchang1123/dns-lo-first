@@ -31,7 +31,15 @@ type upstreamManager struct {
 	inflight        *singleflight
 	rand            *rand.Rand
 	mu              sync.Mutex
+	rep             *reputationStore
 }
+
+type orderMode int
+
+const (
+	orderByScore orderMode = iota
+	orderByReputation
+)
 
 type upstream struct {
 	address      string
@@ -44,7 +52,7 @@ type upstream struct {
 	mu           sync.Mutex
 }
 
-func newUpstreamManager(cfg *runtimeConfig, log *logger, bootstrap, dohBootstrap []string) (*upstreamManager, error) {
+func newUpstreamManager(cfg *runtimeConfig, log *logger, bootstrap, dohBootstrap []string, rep *reputationStore) (*upstreamManager, error) {
 	m := &upstreamManager{
 		cfg:             cfg,
 		log:             log,
@@ -52,6 +60,7 @@ func newUpstreamManager(cfg *runtimeConfig, log *logger, bootstrap, dohBootstrap
 		dohBootstrapDNS: sanitizeDo53(dohBootstrap),
 		inflight:        newSingleflight(),
 		rand:            rand.New(rand.NewSource(time.Now().UnixNano())),
+		rep:             rep,
 	}
 	for _, addr := range cfg.Upstream.Local {
 		up, err := newUpstream(addr, categoryLocal, cfg.Upstream.Scoring.InitialScore)
@@ -96,10 +105,10 @@ func (m *upstreamManager) countDoH() int {
 	return n
 }
 
-func (m *upstreamManager) Query(ctx context.Context, category string, req *dns.Msg) (*dns.Msg, string, error) {
-	key := category + "|" + makeKey(req.Question[0])
+func (m *upstreamManager) Query(ctx context.Context, category string, req *dns.Msg, mode orderMode) (*dns.Msg, string, error) {
+	key := fmt.Sprintf("%s|%d|%s", category, mode, makeKey(req.Question[0]))
 	v, err := m.inflight.Do(ctx, key, func(ctx context.Context) (any, error) {
-		return m.queryCategory(ctx, category, req)
+		return m.queryCategory(ctx, category, req, mode)
 	})
 	if err != nil {
 		return nil, "", err
@@ -113,8 +122,8 @@ type queryResult struct {
 	upstream string
 }
 
-func (m *upstreamManager) queryCategory(ctx context.Context, category string, req *dns.Msg) (queryResult, error) {
-	ordered := m.ordered(category)
+func (m *upstreamManager) queryCategory(ctx context.Context, category string, req *dns.Msg, mode orderMode) (queryResult, error) {
+	ordered := m.ordered(category, mode)
 	if len(ordered) == 0 {
 		return queryResult{}, errors.New("no upstreams configured")
 	}
@@ -156,7 +165,7 @@ func (m *upstreamManager) queryCategory(ctx context.Context, category string, re
 	return queryResult{}, lastErr
 }
 
-func (m *upstreamManager) ordered(category string) []*upstream {
+func (m *upstreamManager) ordered(category string, mode orderMode) []*upstream {
 	var ups []*upstream
 	if category == categoryLocal {
 		ups = append(ups, m.local...)
@@ -180,11 +189,72 @@ func (m *upstreamManager) ordered(category string) []*upstream {
 		sort.Slice(frozen, func(i, j int) bool {
 			return frozen[i].frozenUntil.Before(frozen[j].frozenUntil)
 		})
-		frozen[0].mu.Lock()
-		frozen[0].frozenUntil = time.Time{}
-		frozen[0].mu.Unlock()
-		active = append(active, frozen[0])
+		earliest := frozen[0].frozenUntil
+		for _, up := range frozen {
+			up.mu.Lock()
+			if up.frozenUntil.Equal(earliest) {
+				up.frozenUntil = time.Time{}
+				active = append(active, up)
+				up.mu.Unlock()
+				continue
+			}
+			up.mu.Unlock()
+			break
+		}
 	}
+	if mode == orderByReputation {
+		// Step 1: sort by reputation desc (tie-break by score desc, then random).
+		sort.Slice(active, func(i, j int) bool {
+			ai := active[i]
+			aj := active[j]
+			ri := m.rep.score(ai.address)
+			rj := m.rep.score(aj.address)
+			if ri != rj {
+				return ri > rj
+			}
+			si := ai.getScore()
+			sj := aj.getScore()
+			if math.Abs(si-sj) < 0.001 {
+				m.mu.Lock()
+				less := m.rand.Intn(2) == 0
+				m.mu.Unlock()
+				return less
+			}
+			return si > sj
+		})
+
+		// Step 2: take top half by reputation, then pick the best score within that half.
+		if len(active) <= 1 {
+			return active
+		}
+		half := (len(active) + 1) / 2
+		candidates := append([]*upstream(nil), active[:half]...)
+		sort.Slice(candidates, func(i, j int) bool {
+			si := candidates[i].getScore()
+			sj := candidates[j].getScore()
+			if math.Abs(si-sj) < 0.001 {
+				m.mu.Lock()
+				less := m.rand.Intn(2) == 0
+				m.mu.Unlock()
+				return less
+			}
+			return si > sj
+		})
+		chosen := candidates[0]
+
+		// Return ordered list with chosen first; the rest keep reputation order.
+		out := make([]*upstream, 0, len(active))
+		out = append(out, chosen)
+		for _, up := range active {
+			if up == chosen {
+				continue
+			}
+			out = append(out, up)
+		}
+		return out
+	}
+
+	// orderByScore (default): sort by score desc (tie random), with low-score probing.
 	sort.Slice(active, func(i, j int) bool {
 		si := active[i].getScore()
 		sj := active[j].getScore()

@@ -20,6 +20,25 @@ doh_bootstrap_dns:
   - "8.8.8.8:53"
   - "1.1.1.1:53"
 
+# ASN 污染检查（domain_asn.yaml）
+asn:
+  # 是否启用 ASN 污染检查与信誉更新。
+  enabled: false
+  # ASN 配置文件路径（suffix -> org -> prefixes）。
+  file_path: "./data/domain_asn.yaml"
+
+# 上游信誉缓存（按上游地址存信誉分，持久化 JSON）
+reputation:
+  # 是否启用信誉缓存（被 ASN 污染检查驱动更新）。
+  enabled: false
+  # 持久化文件路径（JSON）。
+  file_path: "./cache/reputation.json"
+  # 每次校验增减的步长（默认 1）。
+  delta: 1
+  # 信誉分钳制范围（默认 [-100,100]）。
+  min: -100
+  max: 100
+
 # 上游 DNS 配置。支持 Do53 host:port 和 DoH URL。
 upstream:
   # 单个上游请求超时时间。首选上游超时后会并发尝试同类剩余上游。
