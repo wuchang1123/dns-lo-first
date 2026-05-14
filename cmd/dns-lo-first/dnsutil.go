@@ -45,6 +45,28 @@ func cacheableBasic(msg *dns.Msg) bool {
 	return hasA(msg)
 }
 
+// isAcceptableUpstreamResponse implements plan.md: for Type A queries, accept only
+// NXDOMAIN or NOERROR with at least one A in Answer; other qtypes keep any non-nil reply.
+func isAcceptableUpstreamResponse(req, resp *dns.Msg) bool {
+	if resp == nil {
+		return false
+	}
+	if len(req.Question) == 0 {
+		return true
+	}
+	if req.Question[0].Qtype != dns.TypeA {
+		return true
+	}
+	switch resp.Rcode {
+	case dns.RcodeNameError:
+		return true
+	case dns.RcodeSuccess:
+		return hasA(resp)
+	default:
+		return false
+	}
+}
+
 func hasA(msg *dns.Msg) bool {
 	return len(extractA(msg)) > 0
 }

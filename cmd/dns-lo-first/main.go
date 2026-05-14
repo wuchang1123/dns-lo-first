@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -27,6 +28,10 @@ func main() {
 	defer log.Close()
 
 	log.Infof("starting dns-lo-first listen=%s config=%s", cfg.Server.Listen, *configPath)
+	if minTotal := 2*cfg.upstreamTimeout + time.Second; cfg.totalTimeout < minTotal {
+		log.Warnf("server.total_timeout (%s) is tight vs upstream.timeout (%s); under load the first upstream can use a full upstream timeout before others run, leaving little budget and causing intermittent SERVFAIL; consider total_timeout >= %s",
+			cfg.totalTimeout, cfg.upstreamTimeout, minTotal)
+	}
 	server, err := newDNSServer(cfg, log)
 	if err != nil {
 		log.Fatalf("init server: %v", err)

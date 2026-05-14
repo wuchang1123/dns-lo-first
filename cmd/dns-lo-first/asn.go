@@ -79,7 +79,10 @@ func loadASNDB(path string, enabled bool) (*asnDB, error) {
 	return db, nil
 }
 
-var errASNNotMatched = errors.New("asn not matched")
+var (
+	errASNNotMatched = errors.New("asn not matched")
+	errASNNoPrefixes = errors.New("asn org has no prefixes")
+)
 
 func (db *asnDB) matchOrg(qname string) (string, error) {
 	if db == nil || !db.enabled {
@@ -105,7 +108,7 @@ func (db *asnDB) polluted(qname string, ips []string) (bool, string, error) {
 	}
 	prefixes := db.orgPrefixes[org]
 	if len(prefixes) == 0 {
-		return false, org, nil
+		return false, org, errASNNoPrefixes
 	}
 	for _, ipStr := range ips {
 		addr, err := netip.ParseAddr(ipStr)

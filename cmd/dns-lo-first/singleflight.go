@@ -24,11 +24,19 @@ func (g *singleflight) Do(ctx context.Context, key string, fn func(context.Conte
 	g.mu.Lock()
 	if c, ok := g.m[key]; ok {
 		g.mu.Unlock()
+		// If ctx and c.done become ready in the same scheduling tick, a single select
+		// picks randomly; prefer the shared result so waiters do not return deadline
+		// errors after the leader already succeeded.
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
 		case <-c.done:
 			return c.val, c.err
+		case <-ctx.Done():
+			select {
+			case <-c.done:
+				return c.val, c.err
+			default:
+				return nil, ctx.Err()
+			}
 		}
 	}
 	c := &call{done: make(chan struct{})}

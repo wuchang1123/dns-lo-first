@@ -22,17 +22,21 @@ type config struct {
 		FilePath string `yaml:"file_path"`
 	} `yaml:"asn"`
 	Reputation struct {
-		Enabled  bool   `yaml:"enabled"`
-		FilePath string `yaml:"file_path"`
-		Delta    int    `yaml:"delta"`
-		Min      int    `yaml:"min"`
-		Max      int    `yaml:"max"`
+		Enabled   bool   `yaml:"enabled"`
+		FilePath  string `yaml:"file_path"`
+		Delta     int    `yaml:"delta"`
+		GoodDelta int    `yaml:"good_delta"`
+		BadDelta  int    `yaml:"bad_delta"`
+		Min       int    `yaml:"min"`
+		Max       int    `yaml:"max"`
 	} `yaml:"reputation"`
 	Upstream struct {
 		Timeout               string `yaml:"timeout"`
 		FreezeDuration        string `yaml:"freeze_duration"`
 		LowScoreProbeInterval string `yaml:"low_score_probe_interval"`
-		ECS                   struct {
+		// ObservationPeriod: after startup, concurrent local+overseas path uses score-top-half random pick instead of reputation ordering.
+		ObservationPeriod string `yaml:"observation_period"`
+		ECS               struct {
 			Enabled      bool   `yaml:"enabled"`
 			IPv4         string `yaml:"ipv4"`
 			SourcePrefix uint8  `yaml:"source_prefix"`
@@ -88,6 +92,7 @@ type runtimeConfig struct {
 	upstreamTimeout       time.Duration
 	freezeDuration        time.Duration
 	lowScoreProbeInterval time.Duration
+	observationPeriod     time.Duration
 	staleTTL              time.Duration
 	nxdomainTTL           time.Duration
 	location              *time.Location
@@ -120,6 +125,10 @@ func loadConfig(path string) (*runtimeConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("upstream.low_score_probe_interval: %w", err)
 	}
+	cfg.observationPeriod, err = time.ParseDuration(cfg.Upstream.ObservationPeriod)
+	if err != nil {
+		return nil, fmt.Errorf("upstream.observation_period: %w", err)
+	}
 	cfg.staleTTL, err = time.ParseDuration(cfg.Cache.Response.StaleTTL)
 	if err != nil {
 		return nil, fmt.Errorf("cache.response.stale_ttl: %w", err)
@@ -140,7 +149,7 @@ func applyDefaults(cfg *runtimeConfig) {
 		cfg.Server.Listen = ":53"
 	}
 	if cfg.Server.TotalTimeout == "" {
-		cfg.Server.TotalTimeout = "6s"
+		cfg.Server.TotalTimeout = "10s"
 	}
 	if cfg.Server.Timezone == "" {
 		cfg.Server.Timezone = "Asia/Shanghai"
@@ -154,6 +163,12 @@ func applyDefaults(cfg *runtimeConfig) {
 	if cfg.Reputation.Delta == 0 {
 		cfg.Reputation.Delta = 1
 	}
+	if cfg.Reputation.GoodDelta == 0 {
+		cfg.Reputation.GoodDelta = cfg.Reputation.Delta
+	}
+	if cfg.Reputation.BadDelta == 0 {
+		cfg.Reputation.BadDelta = cfg.Reputation.Delta
+	}
 	if cfg.Reputation.Min == 0 && cfg.Reputation.Max == 0 {
 		cfg.Reputation.Min = -100
 		cfg.Reputation.Max = 100
@@ -166,6 +181,9 @@ func applyDefaults(cfg *runtimeConfig) {
 	}
 	if cfg.Upstream.LowScoreProbeInterval == "" {
 		cfg.Upstream.LowScoreProbeInterval = "1h"
+	}
+	if cfg.Upstream.ObservationPeriod == "" {
+		cfg.Upstream.ObservationPeriod = "1h"
 	}
 	if cfg.Upstream.Scoring.InitialScore == 0 {
 		cfg.Upstream.Scoring.InitialScore = 100

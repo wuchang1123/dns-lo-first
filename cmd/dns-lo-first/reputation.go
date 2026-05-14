@@ -9,12 +9,13 @@ import (
 )
 
 type reputationStore struct {
-	mu      sync.Mutex
-	enabled bool
-	path    string
-	delta   int
-	min     int
-	max     int
+	mu        sync.Mutex
+	enabled   bool
+	path      string
+	goodDelta int
+	badDelta  int
+	min       int
+	max       int
 
 	scores map[string]int
 	log    *logger
@@ -24,15 +25,16 @@ type reputationDisk struct {
 	Scores map[string]int `json:"scores"`
 }
 
-func newReputationStore(path string, enabled bool, delta, min, max int, log *logger) (*reputationStore, error) {
+func newReputationStore(path string, enabled bool, goodDelta, badDelta, min, max int, log *logger) (*reputationStore, error) {
 	s := &reputationStore{
-		enabled: enabled,
-		path:    path,
-		delta:   delta,
-		min:     min,
-		max:     max,
-		scores:  make(map[string]int),
-		log:     log,
+		enabled:   enabled,
+		path:      path,
+		goodDelta: goodDelta,
+		badDelta:  badDelta,
+		min:       min,
+		max:       max,
+		scores:    make(map[string]int),
+		log:       log,
 	}
 	if enabled {
 		if err := s.load(); err != nil {
@@ -42,7 +44,7 @@ func newReputationStore(path string, enabled bool, delta, min, max int, log *log
 		// even before the first adjustment happens.
 		s.save()
 	}
-	log.Infof("reputation cache loaded enabled=%t entries=%d path=%s", enabled, len(s.scores), path)
+	log.Infof("reputation cache loaded enabled=%t entries=%d path=%s good_delta=%d bad_delta=%d range=[%d,%d]", enabled, len(s.scores), path, goodDelta, badDelta, min, max)
 	return s, nil
 }
 
@@ -81,15 +83,21 @@ func (s *reputationStore) adjust(addr string, good bool) {
 		return
 	}
 	s.mu.Lock()
-	cur := s.scores[addr]
+	before := s.scores[addr]
+	cur := before
 	if good {
-		cur += s.delta
+		cur += s.goodDelta
 	} else {
-		cur -= s.delta
+		cur -= s.badDelta
 	}
-	s.scores[addr] = clampInt(cur, s.min, s.max)
+	after := clampInt(cur, s.min, s.max)
+	if after == before {
+		s.mu.Unlock()
+		return
+	}
+	s.scores[addr] = after
 	s.mu.Unlock()
-	s.save()
+	s.save() // immediate persist (temp file + Sync + rename)
 }
 
 func (s *reputationStore) snapshot() reputationDisk {
